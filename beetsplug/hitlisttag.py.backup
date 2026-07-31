@@ -1,0 +1,265 @@
+import json
+import pprint
+from typing import Any, Optional
+
+import mediafile
+from beets.plugins import BeetsPlugin
+from beets.dbcore import types
+from mediafile import (MediaField, ListMediaField, MP3DescStorageStyle, MP3ListDescStorageStyle, MP4StorageStyle,
+                       MP4ListStorageStyle, StorageStyle, ListStorageStyle)
+
+
+# fields:
+#  - MY_SONG_ID
+#  - TOP2000: list of years
+#  - TOP2000_score: int
+#  - TOP2000_charts: list of year:position
+#  - TOP2000_highest: highest position in Top 2000
+
+# Same for TOP100, KERST, ZWAARSTELIJST except
+
+#  - KERST_charts: list of year:{week: position; dict} == json.dumps(k,v)
+
+class Chart:
+    name: str
+    score: int
+    highest: int
+    chart_type: list[str]
+    positions: dict
+
+    def __init__(self, name: str):
+        self.name: str = name
+
+    def to_json_string(self):
+        d = {
+            "name": self.name,
+            "score": self.score,
+            "highest": self.highest,
+            "chart_type": self.chart_type,
+            "positions": self.positions
+        }
+        return json.dumps(d)
+
+    def __repr__(self) -> str:
+        return f"<Chart {self.name}, score={self.score}, highest={self.highest}>"
+
+    @staticmethod
+    def from_dict(d: dict) -> "Chart":
+        print("Parsing chart from dict")
+        name = d["name"]
+        chart = Chart(name)
+        chart.score = d["score"]
+        if "highest" in d.keys():
+            chart.highest = d["highest"]
+        chart.chart_type = d["chart_type"]
+        chart.positions = d["positions"]
+        return chart
+
+    @staticmethod
+    def from_json_string(s: str) -> "Chart":
+        d = json.loads(s)
+        chart = Chart.from_dict(d)
+        return chart
+
+
+class ChartsType(types.Type[list[Chart], None]):
+    sql: str = "TEXT"
+    delimiter: str = "\\␀"
+
+    @property
+    def null(self) -> None:
+        """The value to be exposed when the underlying value is None."""
+        return None
+
+    def format(self, value: list[Chart] | None) -> str:
+        """Given a value of this type, produce a Unicode string
+        representing the value. This is used in template evaluation.
+        """
+        if value is None:
+            return ""
+        json_list = [chart.to_json_string() for chart in value]
+        s = self.delimiter.join(json_list)
+        print (f"chart: formatted as {s}")
+        return s
+
+    def parse(self, string: str) -> list[Chart] | None:
+        """Parse a (possibly human-written) string and return the
+        indicated value of this type.
+        """
+        split = string.split(self.delimiter)
+        charts = [Chart.from_json_string(s) for s in split]
+        return charts
+
+    def normalize(self, value: Any) -> list[Chart] | None:
+        """Given a value that will be assigned into a field of this
+        type, normalize the value to have the appropriate type. This
+        base implementation only reinterprets `None`.
+        """
+        print(f"chart: normalizing")
+        if value is None:
+            return self.null
+        elif isinstance(value, str):
+            return self.parse(value)
+        elif isinstance(value, list):
+            out = []
+            for l in value:
+                if isinstance(l, str):
+                    out.append(Chart.from_json_string(l))
+                elif isinstance(l, list):
+                    if isinstance(l[0], str):
+                        out.append(Chart.from_json_string(l))
+                    else:
+                        print(f"ERROR: Could not interpret ChartType of type '{type(value)}' ")
+                        pprint.pp(value)
+                        return self.null
+            print("normalized to:")
+            pprint.pp(out)
+        else:
+            print(f"ERROR: Could not interpret ChartType of type '{type(value)}' ")
+            pprint.pp(value)
+            return self.null
+
+    def to_sql(self, model_value: list[Chart]):
+        print(f"chart: to_sql")
+        json_list = [chart.to_json_string() for chart in model_value]
+        joined_list = self.delimiter.join(json_list)
+        print(f"parsed as sql to {joined_list}")
+        return joined_list
+
+
+class NullIntegerList(types.Type[list[int], None]):
+    sql: str = "TEXT"
+    delimiter: str = "\\␀"
+
+    @property
+    def null(self) -> None:
+        """The value to be exposed when the underlying value is None."""
+        return None
+
+    def format(self, value: list[int] | None) -> str:
+        """Given a value of this type, produce a Unicode string
+        representing the value. This is used in template evaluation.
+        """
+        s = self.delimiter.join([str(v) for v in value])
+        return s
+
+    def parse(self, string: str) -> list[int] | None:
+        """Parse a (possibly human-written) string and return the
+        indicated value of this type.
+        """
+        split = string.split(self.delimiter)
+        ints = [int(s) for s in split]
+        return ints
+
+    def normalize(self, value: Any) -> list[int] | None:
+        """Given a value that will be assigned into a field of this
+        type, normalize the value to have the appropriate type. This
+        base implementation only reinterprets `None`.
+        """
+        print(f"listint: normalizing")
+        if value is None:
+            return self.null
+        elif isinstance(value, str):
+            return self.parse(value)
+        elif isinstance(value, list):
+            out = []
+            for l in value:
+                if isinstance(l, str):
+                    out.append(int(l))
+                elif isinstance(l, list):
+                    if isinstance(l[0], str):
+                        out.append(int(l))
+                    else:
+                        print(f"ERROR: Could not interpret ListInt of type '{type(value)}' ")
+                        pprint.pp(value)
+                        return self.null
+            print("normalized to:")
+            pprint.pp(out)
+        else:
+            print(f"ERROR: Could not interpret ListInt of type '{type(value)}' ")
+            pprint.pp(value)
+            return self.null
+
+    def to_sql(self, model_value: list[Chart]):
+        print(f"listint: to_sql")
+        joined_list = self.delimiter.join([str(s) for s in model_value])
+        print(f"parsed as sql to {joined_list}")
+        return joined_list
+
+
+NULLINTEGER = types.NullInteger()
+NULLINTEGERLIST = NullIntegerList()
+CHARTSTYPE = ChartsType()
+
+
+class HitlistTag(BeetsPlugin):
+    hitlists = ["top2000", "top100", "zwaarstelijst", "top40", "kerst"]
+    fields = {"": list[str], "_score": int, "_charts": list[str], "_highest": int}
+
+    @property
+    def item_types(self):
+        out = {'my_song_id': NULLINTEGER, "charts": CHARTSTYPE}
+        for h in self.hitlists:
+            for f, s in self.fields.items():
+                if s == str:
+                    out[h + f] = types.STRING
+                elif s == int:
+                    out[h + f] = NULLINTEGER
+                elif s == list[str]:
+                    out[h + f] = types.MULTI_VALUE_DSV
+                elif s == list[int]:
+                    out[h + f] = NULLINTEGERLIST
+
+
+        return out
+
+    def __init__(self):
+
+        super().__init__()
+
+        # LIST OF YEARS
+        for h in self.hitlists:
+            for f, s in self.fields.items():
+                tag = (h + f).upper()
+
+                if s == list[str] or s == str:
+                    out_type = str
+                elif s == list[int] or s == int:
+                    out_type = int
+                else:
+                    raise NotImplemented
+
+                if s == list[str] or s == list[int]:
+                    field = ListMediaField(
+                        MP3ListDescStorageStyle(desc=tag),
+                        MP4ListStorageStyle(f"----:nl.liesdonk.tagger:{tag}"),
+                        ListStorageStyle(tag),
+                        out_type=out_type)
+                    self.add_media_field(tag.lower(), field)
+                #                    mediafile.MediaFile.add_field(tag.lower(), field)
+
+                elif s == str or s == int:
+                    field = MediaField(
+                        MP3DescStorageStyle(desc=tag),
+                        MP4StorageStyle(f"----:nl.liesdonk.tagger:{tag}"),
+                        StorageStyle(tag),
+                        out_type=out_type
+                    )
+                    self.add_media_field(tag.lower(), field)
+
+        charts_field = ListMediaField(
+            MP3ListDescStorageStyle(u'CHARTS'),
+            MP4ListStorageStyle(u'----:nl.liesdonk.tagger:CHARTS'),
+            ListStorageStyle(u'CHARTS'),
+            out_type=str
+        )
+        mediafile.MediaFile.add_field("charts_json", charts_field)
+        #self.add_media_field("charts", charts_field)
+
+        my_song_id = MediaField(
+            MP3DescStorageStyle(u'MY_SONG_ID'),
+            MP4StorageStyle(u'----:nl.liesdonk.tagger:MY_SONG_ID'),
+            StorageStyle(u'MY_SONG_ID'),
+            out_type=int
+        )
+        self.add_media_field('my_song_id', my_song_id)

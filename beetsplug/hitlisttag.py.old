@@ -1,0 +1,314 @@
+import mediafile
+from beets.dbcore.types import T, N
+from beets.plugins import BeetsPlugin
+from beets.dbcore import types
+from mediafile import (MediaField, ListMediaField, MP3DescStorageStyle, MP3ListDescStorageStyle, MP4StorageStyle,
+                       MP4ListStorageStyle, StorageStyle, ListStorageStyle)
+from typing import List, Dict, Union, Any, cast
+import json
+
+
+def _collapse_years(years: list[int]) -> str:
+    prev = None  # previous in list
+    last = None  # last written
+    in_range = False
+    out = ""
+    for m in years:
+        if last is None:  # first digit
+            last = m
+            out = out + str(m)
+        elif in_range:
+            if m != prev + 1:  # end range
+                out = out + "-" + str(prev) + " / " + str(m)
+                in_range = False
+        else:
+            if m == prev + 1:  # start range
+                in_range = True
+            else:
+                out = out + " / " + str(m)
+
+        prev = m
+    if in_range:
+        out = out + "-" + str(prev)
+    return out
+
+
+# fields:
+#  - MY_SONG_ID
+#  - TOP2000: list of years
+#  - TOP2000_score: int
+#  - TOP2000_charts: list of year:position
+#  - TOP2000_highest: highest position in Top 2000
+
+# Same for TOP100, TOP40, ZWAARSTELIJST except
+
+#  - TOP40_charts: list of year:{week: position; dict} == json.dumps(k,v)
+
+# T type, N nulltype
+
+type yearlist = list[int]
+
+class YearList(types.Type[yearlist, None]):
+    model_type = yearlist
+
+    def __init__(self):
+        self.delimiter = "\\␀"
+
+    def format(self, value: Union[yearlist, None]) -> str:
+        # unicode representing the value in template evaluation
+        if value is None:
+            return "<no entries>"
+        out = _collapse_years([int(v) for v in value])
+        return out
+
+    def parse(self, string: str) -> Union[yearlist, None]:
+        # parse string from database
+        if not string:
+            return self.null
+        out = [int(year) for year in string.split(self.delimiter)]
+        return out
+
+    def to_sql(self, model_value: yearlist) -> str:
+        if model_value is None:
+            return ""
+        out = self.delimiter.join([str(v) for v in model_value])
+        return out
+
+    def normalize(self, value: Any) -> Union[yearlist, None]:
+        if value is None:
+            return self.null
+        out = [int(v) for v in value]
+        return out
+
+
+    def from_sql(
+            self,
+            sql_value: Union[None, int, float, str, bytes] ) -> Union[yearlist, None]:
+        print(f"VALUE/YearList/fromsql/in ({type(sql_value)}) : {sql_value}")
+        if isinstance(sql_value, memoryview):
+            sql_value = bytes(sql_value).decode("utf-8", "ignore")
+        if isinstance(sql_value, str):
+            out =  self.parse(sql_value)
+        else:
+            out =  self.normalize(sql_value)
+        print(f"NORM/YearList/fromsql/out ({type(out)}): {out}")
+
+        return out
+
+    @property
+    def null(self):
+        return None
+
+
+type chart = dict[int, dict[int, int]]
+
+
+class Chart(types.Type[chart, None]):
+    model_type = chart
+
+    def __init__(self):
+        self.delimiter = "\\␀"
+
+    def format(self, value: Union[chart, None]) -> str:
+        # unicode representing the value in template evaluation
+        if value is None:
+            return "<no entries>"
+        out = json.dumps(value)
+        return out
+
+    def parse(self, string: str) -> Union[chart, None]:
+        # parse string from database
+        if not string:
+            return self.null
+        out = { int(x[0]):json.loads(x[1]) for x in [s.split(':', maxsplit=1) for s in string.split(self.delimiter)]}
+        return out
+
+    def normalize(self, value: Any) -> Union[yearlist, None]:
+        if value is None:
+            return self.null
+        if isinstance(value, str):
+            out = { int(x[0]):json.loads(x[1]) for x in [s.split(':', maxsplit=1) for s in value.split(self.delimiter)]}
+        elif isinstance(value, list):
+            out = { int(x[0]):json.loads(x[1]) for x in [s.split(':', maxsplit=1) for s in value]}
+        return out
+
+
+    def to_sql(self, model_value: chart):
+        out = self.delimiter.join(
+            [f"{k}:{json.dumps(v)}" for k, v in model_value.items()]
+        )
+        return out
+
+    @property
+    def null(self):
+        return None
+
+
+YEARLIST = YearList()
+CHART = Chart()
+NULLINTEGER = types.NullInteger()
+
+
+class HitlistTag(BeetsPlugin):
+    item_types = {
+        'top2000': YEARLIST,
+        'top2000_score': NULLINTEGER,
+        'top2000_charts': CHART,
+        'top2000_highest': NULLINTEGER,
+
+        'top100': YEARLIST,
+        'top100_score': NULLINTEGER,
+        'top100_charts': CHART,
+        'top100_highest': NULLINTEGER,
+
+        'zwaarstelijst': YEARLIST,
+        'zwaarstelijst_score': NULLINTEGER,
+        'zwaarstelijst_charts': CHART,
+        'zwaarstelijst_highest': NULLINTEGER,
+
+        'top40': YEARLIST,
+        'top40_score': NULLINTEGER,
+        'top40_charts': CHART,
+        'top40_highest': NULLINTEGER,
+
+        'my_song_id': NULLINTEGER
+    }
+
+    def __init__(self):
+        # TOP 2000
+
+        super().__init__()
+
+        top2000 = ListMediaField(
+            MP3ListDescStorageStyle(desc=u'TOP2000', as_type=int, read_only=True),
+            MP4ListStorageStyle('----:nl.liesdonk.tagger:TOP2000', as_type=int, read_only=True),
+            ListStorageStyle('TOP2000', as_type=int, read_only=True)
+        )
+        mediafile.MediaFile.add_field('top2000', top2000)
+
+        top2000_score = MediaField(
+            MP3DescStorageStyle(desc=u'TOP2000_score', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:TOP2000_score', as_type=int, read_only=True),
+            StorageStyle('TOP2000_score', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('top2000_score', top2000_score)
+
+        top2000_charts = ListMediaField(
+            MP3ListDescStorageStyle(desc=u'TOP2000_charts', as_type=str, read_only=True),
+            MP4ListStorageStyle('----:nl.liesdonk.tagger:TOP2000_charts', as_type=str, read_only=True),
+            ListStorageStyle('TOP2000_charts', as_type=str, read_only=True)
+        )
+        mediafile.MediaFile.add_field('top2000_charts', top2000_charts)
+
+        top2000_highest = MediaField(
+            MP3DescStorageStyle(desc=u'TOP2000_highest', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:TOP2000_highest', as_type=int, read_only=True),
+            StorageStyle('TOP2000_highest', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('top2000_highest', top2000_highest)
+
+        # TOP TOP100
+
+        top100 = ListMediaField(
+            MP3ListDescStorageStyle(desc=u'TOP100', as_type=int, read_only=True),
+            MP4ListStorageStyle('----:nl.liesdonk.tagger:TOP100', as_type=int, read_only=True),
+            ListStorageStyle('TOP100', as_type=int, read_only=True)
+        )
+        mediafile.MediaFile.add_field('top100', top100)
+
+        top100_score = MediaField(
+            MP3DescStorageStyle(desc=u'TOP100_score', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:TOP100_score', as_type=int, read_only=True),
+            StorageStyle('TOP100_score', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('top100_score', top100_score)
+
+        top100_charts = ListMediaField(
+            MP3ListDescStorageStyle(desc=u'TOP100_charts', as_type=str, read_only=True),
+            MP4ListStorageStyle('----:nl.liesdonk.tagger:TOP100_charts', as_type=str, read_only=True),
+            ListStorageStyle('TOP100_charts', as_type=str, read_only=True)
+        )
+        mediafile.MediaFile.add_field('top100_charts', top100_charts)
+
+        top100_highest = MediaField(
+            MP3DescStorageStyle(desc=u'TOP100_highest', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:TOP100_highest', as_type=int, read_only=True),
+            StorageStyle('TOP100_highest', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('top100_highest', top100_highest)
+
+        # ZWAARSTELIJST
+
+        zwaarstelijst = ListMediaField(
+            MP3ListDescStorageStyle(desc=u'ZWAARSTELIJST', as_type=int, read_only=True),
+            MP4ListStorageStyle('----:nl.liesdonk.tagger:ZWAARSTELIJST', as_type=int, read_only=True),
+            ListStorageStyle('ZWAARSTELIJST', as_type=int, read_only=True)
+        )
+        mediafile.MediaFile.add_field('zwaarstelijst', zwaarstelijst)
+
+        zwaarstelijst_score = MediaField(
+            MP3DescStorageStyle(desc=u'ZWAARSTELIJST_score', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:ZWAARSTELIJST_score', as_type=int, read_only=True),
+            StorageStyle('ZWAARSTELIJST_score', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('zwaarstelijst_score', zwaarstelijst_score)
+
+        zwaarstelijst_charts = ListMediaField(
+            MP3ListDescStorageStyle(desc=u'ZWAARSTELIJST_charts', as_type=str, read_only=True),
+            MP4ListStorageStyle('----:nl.liesdonk.tagger:ZWAARSTELIJST_charts', as_type=str, read_only=True),
+            ListStorageStyle('ZWAARSTELIJST_charts', as_type=str, read_only=True)
+        )
+        mediafile.MediaFile.add_field('zwaarstelijst_charts', zwaarstelijst_charts)
+
+        zwaarstelijst_highest = MediaField(
+            MP3DescStorageStyle(desc=u'ZWAARSTELIJST_highest', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:ZWAARSTELIJST_highest', as_type=int, read_only=True),
+            StorageStyle('ZWAARSTELIJST_highest', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('zwaarstelijst_highest', zwaarstelijst_highest)
+
+        # TOP40
+
+        top40 = ListMediaField(
+            MP3ListDescStorageStyle(desc=u'TOP40', as_type=int, read_only=True),
+            MP4ListStorageStyle('----:nl.liesdonk.tagger:TOP40', as_type=int, read_only=True),
+            ListStorageStyle('TOP40', as_type=int, read_only=True)
+        )
+        mediafile.MediaFile.add_field('top40', top40)
+
+        top40_score = MediaField(
+            MP3DescStorageStyle(desc=u'TOP40_score', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:TOP40_score', as_type=int, read_only=True),
+            StorageStyle('TOP40_score', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('top40_score', top40_score)
+
+        top40_charts = ListMediaField(
+            MP3ListDescStorageStyle(desc=u'TOP40_charts', as_type=str, read_only=True),
+            MP4ListStorageStyle('----:nl.liesdonk.tagger:TOP40_charts', as_type=str, read_only=True),
+            ListStorageStyle('TOP40_charts', as_type=str, read_only=True)
+        )
+        mediafile.MediaFile.add_field('top40_charts', top40_charts)
+
+        top40_highest = MediaField(
+            MP3DescStorageStyle(desc=u'TOP40_highest', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:TOP40_highest', as_type=int, read_only=True),
+            StorageStyle('TOP40_highest', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('top40_highest', top40_highest)
+
+        my_song_id = MediaField(
+            MP3DescStorageStyle(desc=u'MY_SONG_ID', read_only=True),
+            MP4StorageStyle('----:nl.liesdonk.tagger:MY_SONG_ID', as_type=int, read_only=True),
+            StorageStyle('MY_SONG_ID', as_type=int, read_only=True),
+            out_type=int
+        )
+        mediafile.MediaFile.add_field('my_song_id', my_song_id)

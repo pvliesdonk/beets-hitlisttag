@@ -1,0 +1,232 @@
+import json
+import pprint
+from typing import Any, Optional
+
+from beets.library import Item
+import mediafile
+from beets.dbcore.query import SQLiteType
+from beets.plugins import BeetsPlugin
+from beets.dbcore import types
+from mediafile import (MediaField, ListMediaField, MP3DescStorageStyle, MP3ListDescStorageStyle, MP4StorageStyle,
+                       MP4ListStorageStyle, StorageStyle, ListStorageStyle)
+
+HITLISTS = [
+    "top2000",
+    "top100",
+    "top40",
+    "zwaarstelijst",
+    "kerst"
+]
+
+FIELDS = [
+    "score",
+    "highest"
+]
+
+
+class Chart:
+    name: str
+    score: int
+    highest: int
+    chart_type: list[str]
+    positions: dict
+
+    def __init__(self, name: str):
+        self.name: str = name
+
+    def to_dict(self):
+        d = {
+            "name": self.name,
+            "score": self.score,
+            "highest": self.highest,
+            "chart_type": self.chart_type,
+            "positions": self.positions
+        }
+        return d
+
+    def to_json_string(self):
+        return json.dumps(self.to_dict())
+
+    def __repr__(self) -> str:
+        return f"<Chart {self.name}, score={self.score}, highest={self.highest}>"
+
+    @staticmethod
+    def from_dict(d: dict) -> "Chart":
+        name = d["name"]
+        chart = Chart(name)
+        chart.score = d["score"]
+        if "highest" in d.keys():
+            chart.highest = d["highest"]
+        chart.chart_type = d["chart_type"]
+        chart.positions = d["positions"]
+        return chart
+
+    @staticmethod
+    def from_json_string(s: str) -> "Chart":
+        d = json.loads(s)
+        chart = Chart.from_dict(d)
+        return chart
+
+
+class ChartList(list[Chart]):
+
+    @staticmethod
+    def from_json_string(s: str) -> "ChartList":
+        chartlist = ChartList()
+        d = json.loads(s)
+        for chart in d:
+            chartlist.append(Chart.from_dict(chart))
+        return chartlist
+
+    def get_chart(self, hitlist: str) -> Optional[Chart]:
+        for h in self:
+            if h.name == hitlist:
+                return h
+
+    def to_json_string(self) -> str:
+        return json.dumps([ch.to_dict() for ch in self])
+
+
+class ChartListType(types.Type[ChartList, None]):
+    sql: str = "TEXT"
+
+    @property
+    def null(self) -> None:
+        """The value to be exposed when the underlying value is None."""
+        return None
+
+    def format(self, value: ChartList | None) -> str:
+        """Given a value of this type, produce a Unicode string
+        representing the value. This is used in template evaluation.
+        """
+        if value is None:
+            return ""
+        return value.to_json_string()
+
+    def parse(self, string: str) -> ChartList | None:
+        """Parse a (possibly human-written) string and return the
+        indicated value of this type.
+        """
+        return ChartList.from_json_string(string)
+
+    def normalize(self, value: Any) -> ChartList | None:
+        """Given a value that will be assigned into a field of this
+        type, normalize the value to have the appropriate type. This
+        base implementation only reinterprets `None`.
+        """
+        if value is None:
+            return self.null
+        elif isinstance(value, str):
+            return self.parse(value)
+        else:
+            print(f"ERROR: Could not interpret ChartType of type '{type(value)}' ")
+            pprint.pp(value)
+            return self.null
+
+    def to_sql(self, model_value: "ChartList") -> SQLiteType:
+        return model_value.to_json_string()
+
+
+NULLINTEGER = types.NullInteger()
+CHARTLISTTYPE = ChartListType()
+
+
+class HitlistTag(BeetsPlugin):
+
+    @property
+    def item_types(self):
+        out = {
+            'my_song_id': NULLINTEGER,
+            'charts': CHARTLISTTYPE,
+        }
+        for h in HITLISTS:
+            out[h + "_score"]: types.INTEGER
+            out[h + "_highest"]: NULLINTEGER
+
+        return out
+
+    def __init__(self):
+
+        super().__init__()
+
+        self.register_listener('pluginload', self.loaded)
+
+        lambdas = []
+        for h in HITLISTS:
+            for f in FIELDS:
+                self.template_fields[f"{h}_{f}"] = eval(f"_get_{h}_{f}")
+
+        charts_field = MediaField(
+            MP3DescStorageStyle(u'CHARTS'),
+            MP4StorageStyle(u'----:nl.liesdonk.tagger:CHARTS'),
+            StorageStyle(u'CHARTS'),
+            out_type=str
+        )
+        #mediafile.MediaFile.add_field("charts_json", charts_field)
+        self.add_media_field("charts", charts_field)
+
+        my_song_id = MediaField(
+            MP3DescStorageStyle(u'MY_SONG_ID'),
+            MP4StorageStyle(u'----:nl.liesdonk.tagger:MY_SONG_ID'),
+            StorageStyle(u'MY_SONG_ID'),
+            out_type=int
+        )
+        self.add_media_field('my_song_id', my_song_id)
+
+    def loaded(self):
+        self._log.info("HitlistTag plugin loaded")
+
+
+def _get_field(item: Item, hitlist, field):
+    if "charts" in item._values_flex.keys():
+        chartlist: ChartList = item.charts
+        chart: Chart = chartlist.get_chart(hitlist)
+        if chart is None:
+            return None
+        if field == "score":
+            return int(chart.score)
+        elif field == "highest":
+            return int(chart.highest)
+        raise NotImplemented
+    else:
+        return None
+
+
+def _get_top2000_score(item):
+    return _get_field(item, "top2000", "score")
+
+
+def _get_top2000_highest(item):
+    return _get_field(item, "top2000", "highest")
+
+
+def _get_top100_score(item):
+    return _get_field(item, "top100", "score")
+
+
+def _get_top100_highest(item):
+    return _get_field(item, "top100", "highest")
+
+
+def _get_top40_score(item):
+    return _get_field(item, "top40", "score")
+
+
+def _get_top40_highest(item):
+    return _get_field(item, "top40", "highest")
+
+
+def _get_zwaarstelijst_score(item):
+    return _get_field(item, "zwaarstelijst", "score")
+
+
+def _get_zwaarstelijst_highest(item):
+    return _get_field(item, "zwaarstelijst", "highest")
+
+
+def _get_kerst_score(item):
+    return _get_field(item, "kerst", "score")
+
+
+def _get_kerst_highest(item):
+    return _get_field(item, "kerst", "highest")
