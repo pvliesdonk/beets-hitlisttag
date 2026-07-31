@@ -36,6 +36,14 @@ given year/week from the library. `stated` (purpose), `evidenced` (mechanics:
 
 ## Milestones and order
 
+Milestones (each holds its acceptance criterion in its GitHub description):
+
+1. [Package scaffolding](https://github.com/pvliesdonk/beets-hitlisttag/milestone/1)
+2. [Chart model correctness](https://github.com/pvliesdonk/beets-hitlisttag/milestone/2)
+3. [Command robustness](https://github.com/pvliesdonk/beets-hitlisttag/milestone/3)
+4. [Configurable chart definitions](https://github.com/pvliesdonk/beets-hitlisttag/milestone/4)
+5. [Release automation](https://github.com/pvliesdonk/beets-hitlisttag/milestone/5)
+
 The ordering argument is information gain, not just dependency.
 
 1. **Package scaffolding** first: it is cheap, it resolves the largest
