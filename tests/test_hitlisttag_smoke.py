@@ -22,9 +22,7 @@ def test_plugin_loads_and_declares_flexible_fields():
         config["plugins"] = ["hitlisttag"]
         load_plugins()
 
-        plugin = next(
-            p for p in find_plugins() if isinstance(p, HitlistTag)
-        )
+        plugin = next(p for p in find_plugins() if isinstance(p, HitlistTag))
         expected = plugin.item_types
         assert expected, "plugin declared no item_types"
         for field in expected:
