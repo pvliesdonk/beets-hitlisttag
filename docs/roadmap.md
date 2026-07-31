@@ -30,9 +30,17 @@ given year/week from the library. `stated` (purpose), `evidenced` (mechanics:
   in execution (type-layer inconsistencies, hardcoded chart definitions,
   unpackaged imports), not in the shape. `derived`.
 - Chart definitions (which hitlists exist, their axes) become user
-  configuration instead of constants in code. `derived` from the hardcoded
-  `HITLISTS_DEFINITION` at `beetsplug/hitlisttag.py:15` and the user's ask
-  for "better/cleaner"; the user has not explicitly requested configurability.
+  configuration instead of constants in code. `stated` (2026-07-31): on older
+  beets the charts could not be made queryable/sortable generically, so the
+  chart names were hardcoded as a forced workaround; a generic way is wanted.
+  Current beets supports this: `item_types` may be a computed property, so
+  typed fields can be generated from the plugin's config
+  (`evidenced`: beets stable docs, *Flexible Field Types*,
+  <https://beets.readthedocs.io/en/stable/dev/plugins/other/fields.html>).
+- The `my_song_id`, `backup_artist`, and `backup_title` fields are **out of
+  scope** — they belong to the external `nl.liesdonk.tagger` ecosystem, not
+  this plugin. `stated` (2026-07-31). Their removal is tracked as a work item
+  in the chart-model-correctness milestone.
 
 ## Milestones and order
 
@@ -69,12 +77,6 @@ The ordering argument is information gain, not just dependency.
   can go stale; computed fields are always fresh but interact differently
   with queries. *Resolved by:* the research issue in the tracker (blocks
   refining the configurable-definitions milestone).
-- **Scope of the non-chart fields.** `my_song_id`, `backup_artist`, and
-  `backup_title` (`beetsplug/charts.py:246-267`, `evidenced`) belong to an
-  external tagger ecosystem (`nl.liesdonk.tagger`). Whether this plugin owns
-  them or they move elsewhere is the user's call. *Resolved by:* user
-  decision; flagged in the session handoff. Until answered, work does not
-  remove them.
 - **The producer of the `CHARTS` tag.** Some external tool writes the tag
   this plugin consumes; its format stability is unknown. Not knowing does not
   change the next steps (the parser must be defensive either way), so this is
@@ -88,3 +90,9 @@ The ordering argument is information gain, not just dependency.
 
 - 2026-07-31 — charted. Baseline source committed unmodified, including
   stale variant files; their removal is scaffolding-milestone work.
+- 2026-07-31 — two unknowns resolved by the user: the non-chart fields
+  (`my_song_id`, `backup_*`) are out of scope (removal tracked as a work
+  item), and configurable chart definitions moved from `derived` to `stated`
+  — the hardcoding was a forced workaround on older beets, not a preference.
+  Doc evidence that current beets supports config-driven typed fields was
+  added to the field-materialization research issue.
