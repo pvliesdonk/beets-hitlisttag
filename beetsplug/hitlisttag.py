@@ -10,7 +10,14 @@ from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
 from beets.ui import Subcommand, CommonOptionsParser
 
-from charts import ChartsParseException, _collapse_range, Chart, ChartList, charts_field, my_song_id_field
+from beetsplug.charts import (
+    ChartsParseException,
+    Chart,
+    ChartList,
+    _collapse_range,
+    charts_field,
+    my_song_id_field,
+)
 
 HITLISTS_DEFINITION = {
     "top2000": ["year"],
