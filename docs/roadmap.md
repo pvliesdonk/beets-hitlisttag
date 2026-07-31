@@ -30,11 +30,18 @@ given year/week from the library. `stated` (purpose), `evidenced` (mechanics:
   in execution (type-layer inconsistencies, hardcoded chart definitions,
   unpackaged imports), not in the shape. `derived`.
 - Chart definitions (which hitlists exist, their axes) become user
-  configuration instead of constants in code. `stated` (2026-07-31): on older
-  beets the charts could not be made queryable/sortable generically, so the
-  chart names were hardcoded as a forced workaround; a generic way is wanted.
-  Current beets supports this: `item_types` may be a computed property, so
-  typed fields can be generated from the plugin's config
+  configuration instead of constants in code. `stated` (2026-07-31): getting
+  charts into the database queryable/sortable generically was a major
+  struggle, so the chart names were hardcoded as a forced workaround; a
+  generic way is wanted. The user attributes the difficulty to the
+  **mediafile layer** rather than beets itself (`stated`, correction). That
+  constraint is real and current: mediafile 0.17.0 still registers custom
+  tags one `MediaField` at a time, with explicit per-format storage styles,
+  erroring on name collisions (`evidenced`: installed
+  `mediafile.MediaFile.add_field` source). The existing design already
+  routes around it — files carry a single generic `CHARTS` JSON tag, so
+  genericity is needed only on the beets side, where `item_types` may be a
+  computed property generating typed fields from the plugin's config
   (`evidenced`: beets stable docs, *Flexible Field Types*,
   <https://beets.readthedocs.io/en/stable/dev/plugins/other/fields.html>).
 - The `my_song_id`, `backup_artist`, and `backup_title` fields are **out of
@@ -96,3 +103,8 @@ The ordering argument is information gain, not just dependency.
   — the hardcoding was a forced workaround on older beets, not a preference.
   Doc evidence that current beets supports config-driven typed fields was
   added to the field-materialization research issue.
+- 2026-07-31 — user correction: the historical generalization difficulty sat
+  in the mediafile layer, not beets. Verified against installed mediafile
+  0.17.0 that the constraint persists; the single-blob `CHARTS` tag design
+  is the correct boundary for it, so the argument stands with corrected
+  attribution.
