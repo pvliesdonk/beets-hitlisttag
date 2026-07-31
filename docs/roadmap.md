@@ -44,6 +44,12 @@ given year/week from the library. `stated` (purpose), `evidenced` (mechanics:
   computed property generating typed fields from the plugin's config
   (`evidenced`: beets stable docs, *Flexible Field Types*,
   <https://beets.readthedocs.io/en/stable/dev/plugins/other/fields.html>).
+- Accepted limitation of config-driven definitions: a chart present in a
+  file's `CHARTS` tag but absent from config is ignored for per-chart field
+  materialization — "not a huge problem". `stated` (2026-07-31). The raw
+  data survives in the `charts` blob either way; only the queryable
+  projection is skipped (`evidenced`: the current hardcoded equivalent at
+  `beetsplug/hitlisttag.py:199-201` logs and skips unknown chart names).
 - The `my_song_id`, `backup_artist`, and `backup_title` fields are **out of
   scope** — they belong to the external `nl.liesdonk.tagger` ecosystem, not
   this plugin. `stated` (2026-07-31). Their removal is tracked as a work item
