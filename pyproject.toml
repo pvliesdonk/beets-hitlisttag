@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -44,6 +44,11 @@ source = "vcs"
 # The plugin modules live under the PEP 420 `beetsplug` namespace.
 [tool.hatch.build.targets.wheel]
 packages = ["beetsplug"]
+exclude = [
+    "beetsplug/hitlisttag.py.backup",
+    "beetsplug/hitlisttag.py.old",
+    "beetsplug/hitlisttag.py.template_funcs",
+]
 
 [tool.ruff]
 line-length = 88
