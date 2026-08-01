@@ -57,16 +57,25 @@ class ChartListType(types.Type[ChartList, None]):
             return None
 
     def normalize(self, value: Any) -> ChartList | None:
-        """Given a value that will be assigned into a field of this
-        type, normalize the value to have the appropriate type. This
-        base implementation only reinterprets `None`.
+        """Normalize a value assigned to a charts field.
+
+        None maps to the null value, a ChartList passes through, and a
+        string is parsed as JSON via ChartList.from_json_string. Parse
+        failures degrade to null with a warning so a corrupt CHARTS tag
+        is diagnosable rather than silently lost.
         """
         if value is None:
             return self.null
         elif isinstance(value, ChartList):
             return value
         elif isinstance(value, str):
-            return ChartList.from_json_string(value)
+            try:
+                return ChartList.from_json_string(value)
+            except ChartsParseException as err:
+                log.warning(
+                    "Could not parse charts value, falling back to null: {}", err
+                )
+                return self.null
         else:
             log.error(
                 "Could not interpret ChartList value of type '{}'",
