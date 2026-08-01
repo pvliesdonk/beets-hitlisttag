@@ -61,3 +61,6 @@ class TestToSql:
         cl = ChartList([_make_chart()])
         result = CHARTLISTTYPE.to_sql(cl)
         assert result == cl.to_json_string()
+
+    def test_none_returns_none(self):
+        assert CHARTLISTTYPE.to_sql(None) is None

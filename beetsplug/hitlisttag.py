@@ -87,7 +87,7 @@ class ChartListType(types.Type[ChartList, None]):
         if isinstance(model_value, ChartList):
             return model_value.to_json_string()
         elif model_value is None:
-            return ""
+            return None
         else:
             raise ChartsParseException(
                 f"Could not encode modelvalue of type {type(model_value)} : "
