@@ -29,6 +29,6 @@ def test_plugin_loads_and_declares_flexible_fields():
             assert field in Item._types, f"plugin field {field!r} not registered"
 
         assert "charts" in Item._types
-        assert "my_song_id" in Item._types
+        assert "my_song_id" not in Item._types
         assert "top2000" in Item._types
         assert "top2000_score" in Item._types

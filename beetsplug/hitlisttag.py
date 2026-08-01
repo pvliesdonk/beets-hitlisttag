@@ -15,7 +15,6 @@ from beetsplug.charts import (
     ChartsParseException,
     _collapse_range,
     charts_field,
-    my_song_id_field,
 )
 
 HITLISTS_DEFINITION = {
@@ -94,7 +93,6 @@ class ChartListType(types.Type[ChartList, None]):
             )
 
 
-NULLINTEGER = types.NullInteger()
 CHARTLISTTYPE = ChartListType()
 
 
@@ -102,7 +100,6 @@ class HitlistTag(BeetsPlugin):
     @property
     def item_types(self):
         out = {
-            "my_song_id": NULLINTEGER,
             "charts": CHARTLISTTYPE,
         }
 
@@ -128,7 +125,6 @@ class HitlistTag(BeetsPlugin):
         # potentially hook to database_change??
 
         self.add_media_field("charts", charts_field)
-        self.add_media_field("my_song_id", my_song_id_field)
 
     def loaded(self):
         self._log.info("HitlistTag plugin loaded")

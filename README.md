@@ -7,8 +7,7 @@ and makes that data usable inside beets.
 
 It provides:
 
-- typed `charts` and `my_song_id` media fields read from and written to file
-  tags;
+- a typed `charts` media field read from and written to file tags;
 - a `chartsupdate` command that parses the `CHARTS` tag into queryable
   per-chart flexible fields (`top2000`, `top2000_score`, `top2000_highest`,
   `top2000_when`, …);
