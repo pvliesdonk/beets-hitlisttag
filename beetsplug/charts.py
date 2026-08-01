@@ -181,11 +181,28 @@ class Chart:
 
     @staticmethod
     def from_dict(d: dict) -> "Chart":
-        name = d["name"]
-        chart = Chart(name)
+        if not isinstance(d, dict):
+            raise ChartsParseException(
+                f"Expected dict to build Chart from, got {type(d).__name__}"
+            )
+        required = {
+            "name": str,
+            "score": int,
+            "highest": int,
+            "chart_type": list,
+            "positions": dict,
+        }
+        for key, expected in required.items():
+            if key not in d:
+                raise ChartsParseException(f"Chart dict missing required key '{key}'")
+            if not isinstance(d[key], expected):
+                raise ChartsParseException(
+                    f"Chart dict key '{key}' should be {expected.__name__}, "
+                    f"got {type(d[key]).__name__}"
+                )
+        chart = Chart(d["name"])
         chart.score = d["score"]
-        if "highest" in d.keys():
-            chart.highest = d["highest"]
+        chart.highest = d["highest"]
         chart.chart_type = d["chart_type"]
         chart.positions = d["positions"]
         return chart

@@ -1,7 +1,7 @@
-import pprint
 from typing import Any
 
 from beets import library, ui
+from beets import logging as beets_logging
 from beets.dbcore import Results, types
 from beets.dbcore.query import SQLiteType
 from beets.importer import ImportSession, ImportTask
@@ -16,6 +16,8 @@ from beetsplug.charts import (
     _collapse_range,
     charts_field,
 )
+
+log = beets_logging.getLogger("beets.hitlisttag")
 
 HITLISTS_DEFINITION = {
     "top2000": ["year"],
@@ -66,8 +68,10 @@ class ChartListType(types.Type[ChartList, None]):
         elif isinstance(value, str):
             return ChartList.from_json_string(value)
         else:
-            print(f"ERROR: Could not interpret ChartType of type '{type(value)}' ")
-            pprint.pp(value)
+            log.error(
+                "Could not interpret ChartList value of type '{}'",
+                type(value).__name__,
+            )
             return self.null
 
     def to_sql(self, model_value: "ChartList") -> SQLiteType:
