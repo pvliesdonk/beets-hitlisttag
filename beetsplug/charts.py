@@ -213,14 +213,16 @@ class ChartList(list[Chart]):
                 d = json.loads(s)
             except JSONDecodeError as err:
                 raise ChartsParseException(f"Could not decode string: '{s}' ") from err
-        elif isinstance(s, list) and all([isinstance(Chart, x) for x in s]):
-            for chart in s:
-                chartlist.append(chart)
+            if not isinstance(d, list):
+                raise ChartsParseException(
+                    f"Expected a JSON array of charts, got {type(d).__name__}"
+                )
+            for chart in d:
+                chartlist.append(Chart.from_dict(chart))
+        elif isinstance(s, list) and all(isinstance(x, Chart) for x in s):
+            chartlist.extend(s)
         else:
             raise ChartsParseException("Received invalid type to deserialize")
-
-        for chart in d:
-            chartlist.append(Chart.from_dict(chart))
         return chartlist
 
     def get_chart(self, hitlist: str) -> Chart | None:
