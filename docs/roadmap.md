@@ -49,7 +49,7 @@ given year/week from the library. `stated` (purpose), `evidenced` (mechanics:
   materialization — "not a huge problem". `stated` (2026-07-31). The raw
   data survives in the `charts` blob either way; only the queryable
   projection is skipped (`evidenced`: the current hardcoded equivalent at
-  `beetsplug/hitlisttag.py:199-201` logs and skips unknown chart names).
+  `beetsplug/hitlisttag.py:209-213` logs and skips unknown chart names).
 - The `my_song_id`, `backup_artist`, and `backup_title` fields are **out of
   scope** — they belong to the external `nl.liesdonk.tagger` ecosystem, not
   this plugin. `stated` (2026-07-31). Their removal is tracked as a work item
@@ -94,10 +94,10 @@ The ordering argument is information gain, not just dependency.
   this plugin consumes; its format stability is unknown. Not knowing does not
   change the next steps (the parser must be defensive either way), so this is
   recorded, not ticketed. `derived`.
-- **beets version floor.** beets-plex pins `beets>=2.12`; whether this
-  plugin's API usage needs newer or older is unknown. *Resolved by:*
-  scaffolding-milestone refinement, where CI pins an interpreter and beets
-  version and the test suite becomes the evidence. `derived`.
+- **beets version floor.** beets-plex pins `beets>=2.12`; this plugin
+  declares the same dependency floor in `pyproject.toml:28` and CI validates
+  the plugin against whatever version `pip` resolves for it (`evidenced`:
+  `.github/workflows/ci.yml`, `pyproject.toml:28`).
 
 ## History
 
@@ -114,3 +114,7 @@ The ordering argument is information gain, not just dependency.
   0.17.0 that the constraint persists; the single-blob `CHARTS` tag design
   is the correct boundary for it, so the argument stands with corrected
   attribution.
+- 2026-08-01 — milestone 1 (package scaffolding) completed. Stale variant
+  files removed; plugin packaged, installable, and tested; CI gating lint and
+  tests on every PR. Roadmap locators repointed and the beets-version-floor
+  unknown now evidenced by CI/pyproject.toml.
