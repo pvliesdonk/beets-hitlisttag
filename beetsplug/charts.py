@@ -3,7 +3,6 @@ import math
 from collections.abc import Iterator
 from json import JSONDecodeError
 
-import mediafile
 from mediafile import MediaField, MP3DescStorageStyle, MP4StorageStyle, StorageStyle
 
 
@@ -247,34 +246,3 @@ charts_field = MediaField(
     StorageStyle("CHARTS"),
     out_type=str,
 )
-# mediafile.MediaFile.add_field("charts_json", charts_field)
-
-my_song_id_field = MediaField(
-    MP3DescStorageStyle("MY_SONG_ID"),
-    MP4StorageStyle("----:nl.liesdonk.tagger:MY_SONG_ID"),
-    StorageStyle("MY_SONG_ID"),
-    out_type=int,
-)
-
-backup_artist_field = MediaField(
-    MP3DescStorageStyle("BACKUP_ARTIST"),
-    MP4StorageStyle("----:nl.liesdonk.tagger:BACKUP_ARTIST"),
-    StorageStyle("BACKUP_ARTIST"),
-    StorageStyle("BACKUP_ORIGINAL_ARTIST", read_only=True),
-    out_type=str,
-)
-
-backup_title_field = MediaField(
-    MP3DescStorageStyle("BACKUP_TITLE"),
-    MP4StorageStyle("----:nl.liesdonk.tagger:BACKUP_TITLE"),
-    StorageStyle("BACKUP_TITLE"),
-    StorageStyle("BACKUP_ORIGINAL_TITLE", read_only=True),
-    out_type=str,
-)
-
-
-def install() -> None:
-    mediafile.MediaFile.add_field("charts", charts_field)
-    mediafile.MediaFile.add_field("my_song_id", my_song_id_field)
-    mediafile.MediaFile.add_field("backup_title", backup_title_field)
-    mediafile.MediaFile.add_field("backup_artist", backup_artist_field)
