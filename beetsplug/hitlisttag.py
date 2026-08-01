@@ -43,16 +43,13 @@ class ChartListType(types.Type[ChartList, None]):
         """
         if value is None:
             return ""
-        s = value.to_json_string()
-        #        print(f"ChartListType format: {s}")
-        return s
+        return value.to_json_string()
 
     def parse(self, string: str) -> ChartList | None:
         """Parse a (possibly human-written) string and return the
         indicated value of this type.
         """
         try:
-            #            print(f"ChartListType parse: {string}")
             return ChartList.from_json_string(string)
         except ChartsParseException:
             return None
@@ -63,17 +60,11 @@ class ChartListType(types.Type[ChartList, None]):
         base implementation only reinterprets `None`.
         """
         if value is None:
-            return ""
+            return self.null
         elif isinstance(value, ChartList):
-            s = value.to_json_string()
-            #            print(f"ChartListType normalize from ChartList: {s}")
-            return s
-
+            return value
         elif isinstance(value, str):
-            #            print(f"ChartListType normalize from atr: {value}")
-            v = ChartList.from_json_string(value)
-            s = v.to_json_string()
-            return s
+            return ChartList.from_json_string(value)
         else:
             print(f"ERROR: Could not interpret ChartType of type '{type(value)}' ")
             pprint.pp(value)
@@ -81,9 +72,7 @@ class ChartListType(types.Type[ChartList, None]):
 
     def to_sql(self, model_value: "ChartList") -> SQLiteType:
         if isinstance(model_value, ChartList):
-            s = model_value.to_json_string()
-            #            print(f"ChartListType to_sql: {s}")
-            return s
+            return model_value.to_json_string()
         elif model_value is None:
             return ""
         else:
