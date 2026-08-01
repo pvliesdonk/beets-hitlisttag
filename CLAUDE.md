@@ -13,10 +13,10 @@ never from a milestone or the index.
 
 ## Layout
 
-- `beetsplug/` — plugin source. Currently a working prototype imported as-is
-  (see the baseline commit), including stale `.backup`/`.old`/`.template_funcs`
-  variants slated for removal; packaging, tests, and CI arrive via the
-  scaffolding milestone, modeled on
+- `beetsplug/` — plugin source. Working prototype imported as-is in the
+  baseline commit; the stale `.backup`/`.old`/`.template_funcs` variants were
+  removed in the scaffolding milestone. Packaging, tests, and CI are also
+  scaffolding-milestone work, modeled on
   [beets-plex](https://github.com/pvliesdonk/beets-plex).
 
 ## Conventions

@@ -1,32 +1,33 @@
-import json
 import pprint
 from typing import Any
 
-from beets import ui, library
-from beets.dbcore import types, Results
+from beets import library, ui
+from beets.dbcore import Results, types
 from beets.dbcore.query import SQLiteType
-from beets.importer import ImportTask, ImportSession
+from beets.importer import ImportSession, ImportTask
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
-from beets.ui import Subcommand, CommonOptionsParser
+from beets.ui import CommonOptionsParser, Subcommand
 
-from charts import ChartsParseException, _collapse_range, Chart, ChartList, charts_field, my_song_id_field
+from beetsplug.charts import (
+    Chart,
+    ChartList,
+    ChartsParseException,
+    _collapse_range,
+    charts_field,
+    my_song_id_field,
+)
 
 HITLISTS_DEFINITION = {
     "top2000": ["year"],
     "top100": ["year"],
     "top40": ["year", "week"],
     "zwaarstelijst": ["year"],
-    "kerst": ["year"]
+    "kerst": ["year"],
 }
 HITLISTS = list(HITLISTS_DEFINITION.keys())
 
-FIELDS = [
-    "",
-    "score",
-    "highest",
-    "when"
-]
+FIELDS = ["", "score", "highest", "when"]
 
 
 class ChartListType(types.Type[ChartList, None]):
@@ -44,7 +45,7 @@ class ChartListType(types.Type[ChartList, None]):
         if value is None:
             return ""
         s = value.to_json_string()
-#        print(f"ChartListType format: {s}")
+        #        print(f"ChartListType format: {s}")
         return s
 
     def parse(self, string: str) -> ChartList | None:
@@ -52,9 +53,9 @@ class ChartListType(types.Type[ChartList, None]):
         indicated value of this type.
         """
         try:
-#            print(f"ChartListType parse: {string}")
+            #            print(f"ChartListType parse: {string}")
             return ChartList.from_json_string(string)
-        except ChartsParseException as ex:
+        except ChartsParseException:
             return None
 
     def normalize(self, value: Any) -> ChartList | None:
@@ -66,11 +67,11 @@ class ChartListType(types.Type[ChartList, None]):
             return ""
         elif isinstance(value, ChartList):
             s = value.to_json_string()
-#            print(f"ChartListType normalize from ChartList: {s}")
+            #            print(f"ChartListType normalize from ChartList: {s}")
             return s
 
         elif isinstance(value, str):
-#            print(f"ChartListType normalize from atr: {value}")
+            #            print(f"ChartListType normalize from atr: {value}")
             v = ChartList.from_json_string(value)
             s = v.to_json_string()
             return s
@@ -82,12 +83,15 @@ class ChartListType(types.Type[ChartList, None]):
     def to_sql(self, model_value: "ChartList") -> SQLiteType:
         if isinstance(model_value, ChartList):
             s = model_value.to_json_string()
-#            print(f"ChartListType to_sql: {s}")
+            #            print(f"ChartListType to_sql: {s}")
             return s
         elif model_value is None:
             return ""
         else:
-            raise ChartsParseException(f"Could not encode modelvalue of type {type(model_value)} : {model_value}")
+            raise ChartsParseException(
+                f"Could not encode modelvalue of type {type(model_value)} : "
+                f"{model_value}"
+            )
 
 
 NULLINTEGER = types.NullInteger()
@@ -95,12 +99,11 @@ CHARTLISTTYPE = ChartListType()
 
 
 class HitlistTag(BeetsPlugin):
-
     @property
     def item_types(self):
         out = {
-            'my_song_id': NULLINTEGER,
-            'charts': CHARTLISTTYPE,
+            "my_song_id": NULLINTEGER,
+            "charts": CHARTLISTTYPE,
         }
 
         for h in HITLISTS:
@@ -115,55 +118,60 @@ class HitlistTag(BeetsPlugin):
         super().__init__()
 
         self.config.add(
-            {
-                "auto": False,
-                "overwrite": False,
-                "format": "$artist - $album - $title"
-            }
+            {"auto": False, "overwrite": False, "format": "$artist - $album - $title"}
         )
 
         if self.config["auto"]:
             self.import_stages = [self.imported]
 
-        self.register_listener('pluginload', self.loaded)
+        self.register_listener("pluginload", self.loaded)
         # potentially hook to database_change??
 
         self.add_media_field("charts", charts_field)
-        self.add_media_field('my_song_id', my_song_id_field)
+        self.add_media_field("my_song_id", my_song_id_field)
 
     def loaded(self):
         self._log.info("HitlistTag plugin loaded")
 
     def commands(self) -> list[Subcommand]:
-        cmd1 = Subcommand(
-            "chartsupdate", help="Read a 'CHARTS' tag and process it "
-        )
+        cmd1 = Subcommand("chartsupdate", help="Read a 'CHARTS' tag and process it ")
         cmd1.func = self.update
-        cmd2 = Subcommand(
-            "charts", help="Show chart entries"
+        cmd2 = Subcommand("charts", help="Show chart entries")
+        cmd2.parser.add_option(
+            "-F",
+            "--full",
+            dest="full",
+            action="store_true",
+            help="Show all positions",
         )
-        cmd2.parser.add_option("-F", "--full", dest="full", action="store_true", help="Show all positions")
         cmd2.func = self.show_charts
 
-        cmd3 = Subcommand(
-            "hitlist", help="Show hitlist"
-        )
+        cmd3 = Subcommand("hitlist", help="Show hitlist")
         cmd3.parser.set_usage("%prog [options] hitlist year [week*/]")
-        cmd3.parser.add_option("-M", "--missing", dest="show_missing", action="store_true",
-                               help="Summarize missing items")
+        cmd3.parser.add_option(
+            "-M",
+            "--missing",
+            dest="show_missing",
+            action="store_true",
+            help="Summarize missing items",
+        )
         cmd3.parser.add_path_option()
         cmd3.parser.add_format_option(target=library.Item)
         cmd3.func = self.show_hitlist
 
         return [cmd1, cmd2, cmd3]
 
-    def show_charts(self, lib: Library, opts: CommonOptionsParser, args: list[str]) -> None:
+    def show_charts(
+        self, lib: Library, opts: CommonOptionsParser, args: list[str]
+    ) -> None:
         if opts.full:
             self.show_charts_full(lib, opts, args)
         else:
             self.show_charts_summary(lib, opts, args)
 
-    def show_charts_full(self, lib: Library, opts: CommonOptionsParser, args: list[str]) -> None:
+    def show_charts_full(
+        self, lib: Library, opts: CommonOptionsParser, args: list[str]
+    ) -> None:
         items = lib.items(ui.decargs(args))
         item: Item
         for item in items:
@@ -176,7 +184,9 @@ class HitlistTag(BeetsPlugin):
                 ui.print_(f"Chart {chart.name} for {item}")
                 ui.print_(chart.to_string())
 
-    def show_charts_summary(self, lib: Library, opts: CommonOptionsParser, args: list[str]) -> None:
+    def show_charts_summary(
+        self, lib: Library, opts: CommonOptionsParser, args: list[str]
+    ) -> None:
         items = lib.items(ui.decargs(args))
         item: Item
         for item in items:
@@ -197,9 +207,12 @@ class HitlistTag(BeetsPlugin):
         self._log.debug(f"Parsing charts json for {item}:")
         for chart in chartlist:
             if chart.name not in HITLISTS:
-                self._log.error(f"Unknown hitlist: {chart.name}. Will not parse into flexible fields.")
+                self._log.error(
+                    f"Unknown hitlist: {chart.name}. "
+                    f"Will not parse into flexible fields."
+                )
                 continue
-            #existence
+            # existence
             item[f"{chart.name}"] = True
             # score
             item[f"{chart.name}_score"] = chart.score
@@ -223,27 +236,37 @@ class HitlistTag(BeetsPlugin):
     def imported(self, session: ImportSession, task: ImportTask) -> None:
         self.update_items(task.imported_items())
 
-    def show_hitlist(self, lib: Library, opts: CommonOptionsParser, args: list[str]) -> None:
-
+    def show_hitlist(
+        self, lib: Library, opts: CommonOptionsParser, args: list[str]
+    ) -> None:
         if len(args) < 1:
-            self._log.error(f"No hitlist provided. Options are [{"/".join(HITLISTS)}]")
+            self._log.error(f"No hitlist provided. Options are [{'/'.join(HITLISTS)}]")
             return
-        #parse arguments
+        # parse arguments
         if args[0] not in HITLISTS:
-            self._log.error(f"Unknown hitlist requested ({args[0]}). Options are [{"/".join(HITLISTS)}]")
+            self._log.error(
+                f"Unknown hitlist requested ({args[0]}). "
+                f"Options are [{'/'.join(HITLISTS)}]"
+            )
             return
         else:
             hitlist = args[0]
 
-        if len(args) != 1 + len(HITLISTS_DEFINITION[hitlist]):
+        expected_args = HITLISTS_DEFINITION[hitlist]
+        if len(args) != 1 + len(expected_args):
             self._log.error(
-                f"Not enough arguments for hitlist {hitlist}. Please provide: {", ".join(HITLISTS_DEFINITION[hitlist])}")
+                f"Not enough arguments for hitlist {hitlist}. "
+                f"Please provide: {', '.join(expected_args)}"
+            )
             return
 
         if not all([x.isnumeric() for x in args[1:]]):
-            self._log.error(f"Arguments are not numeric: Please provide: {", ".join(HITLISTS_DEFINITION[hitlist])}")
+            self._log.error(
+                f"Arguments are not numeric: Please provide: {', '.join(expected_args)}"
+            )
+            return
 
-        when = ", ".join(map(" ".join, zip(HITLISTS_DEFINITION[hitlist], args[1:])))
+        when = ", ".join(map(" ".join, zip(expected_args, args[1:], strict=False)))
         self._log.info(f"Generating hitlist {hitlist} for {when}")
 
         result = []
@@ -267,9 +290,13 @@ class HitlistTag(BeetsPlugin):
         result = sorted(result, key=lambda x: x[0])
 
         found = [x[0] for x in result]
-        missing = [x for x in range(1, max(found)) if x not in found]  # TODO: find logical maximum
+        # TODO: find logical maximum
+        missing = [x for x in range(1, max(found)) if x not in found]
 
-        fmt = ui.decargs([opts.format])[0] if opts.format else self.config["format"].get(str)
+        if opts.format:
+            fmt = ui.decargs([opts.format])[0]
+        else:
+            fmt = self.config["format"].get(str)
         for item in [r[1] for r in result]:
             ui.print_(format(item, fmt))
 
@@ -277,26 +304,3 @@ class HitlistTag(BeetsPlugin):
             ui.print_(f"Missing the following positions: {_collapse_range(missing)}")
 
         pass
-
-
-if __name__ == "__main__":
-    JSON = """[{"name": "top2000", "score": 14065, "highest": 529, "chart_type": ["year"], "positions": {"2015": 585, 
-    "2016": 582, "2017": 691, "2018": 551, "2019": 715, "2020": 594, "2021": 555, "2022": 560, "2023": 583, 
-    "2024": 529}}, {"name": "top100", "score": 79, "highest": 22, "chart_type": ["year"], "positions": {"1999": 22}}, 
-    {"name": "top40", "score": 393, "highest": 1, "chart_type": ["year", "week"], "positions": {"1999": {"7": 1, 
-    "8": 1, "9": 1, "10": 2, "11": 3, "12": 3, "13": 6, "14": 8, "15": 13, "16": 16, "17": 21, "18": 31, "19": 36, 
-    "20": 39}}}]"""
-
-    jd = json.loads(JSON)
-
-    chartlist: ChartList = ChartList.from_json_string(JSON)
-
-    chart0: Chart = chartlist[0]
-
-    print(chartlist[2].to_string())
-
-    print(chartlist[0].when())
-    print(chartlist[1].when())
-    print(chartlist[2].when())
-
-    pass

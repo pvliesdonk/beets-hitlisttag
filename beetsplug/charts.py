@@ -1,10 +1,10 @@
 import json
 import math
+from collections.abc import Iterator
 from json import JSONDecodeError
-from typing import Optional, Iterator
 
 import mediafile
-from mediafile import (MediaField, MP3DescStorageStyle, MP4StorageStyle, StorageStyle)
+from mediafile import MediaField, MP3DescStorageStyle, MP4StorageStyle, StorageStyle
 
 
 class ChartsParseException(Exception):
@@ -50,16 +50,16 @@ class Chart:
     def __iter__(self):
 
         def _inner(d: dict) -> Iterator:
-            for k,v in d.items():
+            for k, v in d.items():
                 if isinstance(v, dict):
                     for w in _inner(v):
                         yield (int(k),) + w
                 else:
-                    yield (int(k),int(v))
+                    yield (int(k), int(v))
 
         return _inner(self.positions)
 
-    def get_position(self, *position) -> Optional[int]:
+    def get_position(self, *position) -> int | None:
         if len(position) != len(self.chart_type):
             return None
 
@@ -79,7 +79,7 @@ class Chart:
             "score": self.score,
             "highest": self.highest,
             "chart_type": self.chart_type,
-            "positions": self.positions
+            "positions": self.positions,
         }
         return d
 
@@ -88,7 +88,7 @@ class Chart:
         def _inner(d) -> int:
             count = 0
             if isinstance(d, dict):
-                for k, v in d.items():
+                for _k, v in d.items():
                     count += _inner(v)
             else:
                 count += 1
@@ -110,7 +110,7 @@ class Chart:
         if len(prefix) > 0:
             prefix_string = " / ".join(prefix) + ": "
 
-        unit = self.chart_type[level] + ("s" if len(c) > 1 else '')
+        unit = self.chart_type[level] + ("s" if len(c) > 1 else "")
         return f"{prefix_string}{unit}: {_collapse_range([int(y) for y in c])}"
 
     def how_long_string(self) -> str:
@@ -119,7 +119,7 @@ class Chart:
 
     def to_string(self) -> str:
 
-        max_length = [len(x) for x in self.chart_type + ['position']]
+        max_length = [len(x) for x in self.chart_type + ["position"]]
 
         def _do_inner(root, level) -> list:
             keys = sorted(root.keys(), key=lambda x: int(x))
@@ -145,7 +145,11 @@ class Chart:
         # s = f"{self.name}\n" + ''.join(['-']*len(self.name)) + "\n"
         s = "\t".join(self.chart_type + ["position"]) + "\n"
         for entry in inner:
-            s += "\t".join([repr(x[0]).rjust(x[1]) for x in list(zip(entry, max_length))]) + "\n"
+            formatted = [
+                repr(value).rjust(width)
+                for value, width in zip(entry, max_length, strict=False)
+            ]
+            s += "\t".join(formatted) + "\n"
 
         return s
 
@@ -154,9 +158,12 @@ class Chart:
         c = [int(y) for y in self.positions.keys()]
         b = min(c)
 
-        s = f"{self.name}:\t first {a} {b}, {self.how_long_string()}, highest position: {self.highest}, score: {self.score}"
+        s = (
+            f"{self.name}:\t first {a} {b}, {self.how_long_string()}, "
+            f"highest position: {self.highest}, score: {self.score}"
+        )
         if len(c) > 1:
-            s += ", " + self.chart_type[0] + 's: ' + _collapse_range(c)
+            s += ", " + self.chart_type[0] + "s: " + _collapse_range(c)
 
         return s
 
@@ -170,7 +177,7 @@ class Chart:
         return f"<Chart {self.name}, score={self.score}, highest={self.highest}>"
 
     def __eq__(self, other: "Chart"):
-        val =  self.to_dict() == other.to_dict()
+        val = self.to_dict() == other.to_dict()
         return val
 
     @staticmethod
@@ -192,7 +199,6 @@ class Chart:
 
 
 class ChartList(list[Chart]):
-
     def is_empty(self):
         return len(self) == 0
 
@@ -206,8 +212,8 @@ class ChartList(list[Chart]):
                 return chartlist
             try:
                 d = json.loads(s)
-            except JSONDecodeError as ex:
-                raise ChartsParseException(f"Could not decode string: '{s}' ")
+            except JSONDecodeError as err:
+                raise ChartsParseException(f"Could not decode string: '{s}' ") from err
         elif isinstance(s, list) and all([isinstance(Chart, x) for x in s]):
             for chart in s:
                 chartlist.append(chart)
@@ -218,7 +224,7 @@ class ChartList(list[Chart]):
             chartlist.append(Chart.from_dict(chart))
         return chartlist
 
-    def get_chart(self, hitlist: str) -> Optional[Chart]:
+    def get_chart(self, hitlist: str) -> Chart | None:
         for h in self:
             if h.name == hitlist:
                 return h
@@ -228,7 +234,7 @@ class ChartList(list[Chart]):
         return json.dumps([ch.to_dict() for ch in self])
 
     def __repr__(self):
-        s = f"<Chartlist: {", ".join([c.name for c in self])}>"
+        s = f"<Chartlist: {', '.join([c.name for c in self])}>"
         return s
 
     def __str__(self):
@@ -236,36 +242,35 @@ class ChartList(list[Chart]):
 
 
 charts_field = MediaField(
-    MP3DescStorageStyle(u'CHARTS'),
-    MP4StorageStyle(u'----:nl.liesdonk.tagger:CHARTS'),
-    StorageStyle(u'CHARTS'),
-    out_type=str
+    MP3DescStorageStyle("CHARTS"),
+    MP4StorageStyle("----:nl.liesdonk.tagger:CHARTS"),
+    StorageStyle("CHARTS"),
+    out_type=str,
 )
 # mediafile.MediaFile.add_field("charts_json", charts_field)
 
 my_song_id_field = MediaField(
-    MP3DescStorageStyle(u'MY_SONG_ID'),
-    MP4StorageStyle(u'----:nl.liesdonk.tagger:MY_SONG_ID'),
-    StorageStyle(u'MY_SONG_ID'),
-    out_type=int
+    MP3DescStorageStyle("MY_SONG_ID"),
+    MP4StorageStyle("----:nl.liesdonk.tagger:MY_SONG_ID"),
+    StorageStyle("MY_SONG_ID"),
+    out_type=int,
 )
 
 backup_artist_field = MediaField(
-    MP3DescStorageStyle(u'BACKUP_ARTIST'),
-    MP4StorageStyle(u'----:nl.liesdonk.tagger:BACKUP_ARTIST'),
-    StorageStyle(u'BACKUP_ARTIST'),
-    StorageStyle(u'BACKUP_ORIGINAL_ARTIST', read_only=True),
-    out_type=str
+    MP3DescStorageStyle("BACKUP_ARTIST"),
+    MP4StorageStyle("----:nl.liesdonk.tagger:BACKUP_ARTIST"),
+    StorageStyle("BACKUP_ARTIST"),
+    StorageStyle("BACKUP_ORIGINAL_ARTIST", read_only=True),
+    out_type=str,
 )
 
 backup_title_field = MediaField(
-    MP3DescStorageStyle(u'BACKUP_TITLE'),
-    MP4StorageStyle(u'----:nl.liesdonk.tagger:BACKUP_TITLE'),
-    StorageStyle(u'BACKUP_TITLE'),
-    StorageStyle(u'BACKUP_ORIGINAL_TITLE', read_only=True),
-    out_type=str
+    MP3DescStorageStyle("BACKUP_TITLE"),
+    MP4StorageStyle("----:nl.liesdonk.tagger:BACKUP_TITLE"),
+    StorageStyle("BACKUP_TITLE"),
+    StorageStyle("BACKUP_ORIGINAL_TITLE", read_only=True),
+    out_type=str,
 )
-
 
 
 def install() -> None:
@@ -273,26 +278,3 @@ def install() -> None:
     mediafile.MediaFile.add_field("my_song_id", my_song_id_field)
     mediafile.MediaFile.add_field("backup_title", backup_title_field)
     mediafile.MediaFile.add_field("backup_artist", backup_artist_field)
-
-
-if __name__ == "__main__":
-    JSON = """[{"name": "top2000", "score": 14065, "highest": 529, "chart_type": ["year"], "positions": {"2015": 585, 
-    "2016": 582, "2017": 691, "2018": 551, "2019": 715, "2020": 594, "2021": 555, "2022": 560, "2023": 583, 
-    "2024": 529}}, {"name": "top100", "score": 79, "highest": 22, "chart_type": ["year"], "positions": {"1999": 22}}, 
-    {"name": "top40", "score": 393, "highest": 1, "chart_type": ["year", "week"], "positions": {"1999": {"7": 1, 
-    "8": 1, "9": 1, "10": 2, "11": 3, "12": 3, "13": 6, "14": 8, "15": 13, "16": 16, "17": 21, "18": 31, "19": 36, 
-    "20": 39}}}]"""
-
-    jd = json.loads(JSON)
-
-    chartlist: ChartList = ChartList.from_json_string(JSON)
-
-    chart0: Chart = chartlist[0]
-
-    print(chartlist[2].to_string())
-
-    print(chartlist[0].when())
-    print(chartlist[1].when())
-    print(chartlist[2].when())
-
-    pass
