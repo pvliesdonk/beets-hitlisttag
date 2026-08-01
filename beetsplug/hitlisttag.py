@@ -264,6 +264,7 @@ class HitlistTag(BeetsPlugin):
             self._log.error(
                 f"Arguments are not numeric: Please provide: {', '.join(expected_args)}"
             )
+            return
 
         when = ", ".join(map(" ".join, zip(expected_args, args[1:], strict=False)))
         self._log.info(f"Generating hitlist {hitlist} for {when}")
