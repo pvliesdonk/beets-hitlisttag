@@ -120,3 +120,7 @@ The ordering argument is information gain, not just dependency.
   unknown now evidenced by CI/pyproject.toml.
 - 2026-08-01 — milestone 2 (chart model correctness) refined; no change to
   direction or ordering.
+- 2026-08-02 — milestone 2 (chart model correctness) completed; milestone 3
+  (command robustness) refined. A bug filed against milestone 3 turned out
+  to be already fixed during milestone 2 work. No change to direction or
+  ordering.
