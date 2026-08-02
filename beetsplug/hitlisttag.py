@@ -287,6 +287,10 @@ class HitlistTag(BeetsPlugin):
 
         result = sorted(result, key=lambda x: x[0])
 
+        if not result:
+            ui.print_(f"No positions found for hitlist {hitlist} for {when}.")
+            return
+
         found = [x[0] for x in result]
         # TODO: find logical maximum
         missing = [x for x in range(1, max(found)) if x not in found]
