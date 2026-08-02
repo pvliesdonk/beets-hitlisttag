@@ -219,7 +219,7 @@ class ChartList(list[Chart]):
         return len(self) == 0
 
     @staticmethod
-    def from_json_string(s: str) -> "ChartList":
+    def from_json_string(s: "str | ChartList | list[Chart]") -> "ChartList":
         chartlist = ChartList()
         if isinstance(s, ChartList):
             return s
