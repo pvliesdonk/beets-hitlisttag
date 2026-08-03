@@ -74,6 +74,33 @@ def _reset_plugin_instances():
         beets.plugins._instances[:] = saved
 
 
+@pytest.fixture(autouse=True)
+def _idempotent_media_field():
+    """Make ``MediaFile.add_field`` idempotent across test re-loads.
+
+    The hitlisttag plugin registers a custom ``charts`` media field in
+    ``__init__`` via ``add_media_field``. ``_reset_plugin_instances`` clears
+    the loaded instances per test, so the plugin re-instantiates on the next
+    ``load_plugins()`` — but mediafile raises ``ValueError`` if a field is
+    registered twice on the class. Since the descriptor is a module-level
+    singleton, re-registering the same field is a safe no-op.
+    """
+    import mediafile
+
+    original = mediafile.MediaFile.__dict__["add_field"]
+
+    def patched(cls, name, descriptor):
+        if name in cls.__dict__:
+            return  # already registered with the same singleton descriptor
+        return original.__func__(cls, name, descriptor)
+
+    mediafile.MediaFile.add_field = classmethod(patched)
+    try:
+        yield
+    finally:
+        mediafile.MediaFile.add_field = original
+
+
 @pytest.fixture
 def rsrc_dir() -> Path:
     """Directory holding the committed audio test fixtures."""
