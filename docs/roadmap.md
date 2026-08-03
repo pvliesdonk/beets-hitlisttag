@@ -145,3 +145,10 @@ The ordering argument is information gain, not just dependency.
   and release documentation (#65). The release workflow is modeled on
   beets-plex (trusted publishing via OIDC); hatch-vcs version derivation is
   already in place. No change to direction or ordering.
+- 2026-08-03 — milestone 5 (release automation) completed. Both issues closed:
+  a `release.yml` workflow publishes to PyPI via trusted publishing on GitHub
+  Release (#64), and `CONTRIBUTING.md` documents the development setup, checks,
+  commit and PR conventions, and the release process including the one-time
+  PyPI trusted-publisher setup (#65). The workflow is dormant until the first
+  release is cut; its PyPI prerequisites are manual and documented. This is the
+  final milestone in the roadmap. No change to direction or ordering.
