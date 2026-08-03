@@ -75,9 +75,13 @@ The ordering argument is information gain, not just dependency.
 2. **Chart model correctness** before **command robustness**: the commands
    sit on the model, so fixing the model first means command tests are
    written once against corrected behavior instead of twice. `derived`.
-3. **Configurable chart definitions** after the field-materialization
-   research resolves (see unknowns): the shape of the config surface depends
-   on how per-chart fields are produced. `derived`.
+3. **Configurable chart definitions** after **command robustness**: the
+   commands are the consumers of hitlist definitions, so making them robust
+   first means the config-driven refactor is tested against known-correct
+   behavior rather than debugging both the refactor and pre-existing command
+   bugs at once. The field-materialization research (#6) does not block this
+   milestone — the `hitlists` config key is the same regardless of whether
+   per-chart fields are materialized or computed. `derived`.
 4. **Release automation** last: lowest information gain, independent of the
    rest, and pointless before there is something worth installing. `derived`.
 
@@ -88,8 +92,8 @@ The ordering argument is information gain, not just dependency.
   variant (`beetsplug/hitlisttag.py.template_funcs`, `evidenced`) computed
   them on the fly as template fields. Materialized fields are queryable but
   can go stale; computed fields are always fresh but interact differently
-  with queries. *Resolved by:* the research issue in the tracker (blocks
-  refining the configurable-definitions milestone).
+  with queries. *Resolved by:* research issue #6 (no milestone — cross-cutting;
+  does not block the config surface, which is the same either way).
 - **The producer of the `CHARTS` tag.** Some external tool writes the tag
   this plugin consumes; its format stability is unknown. Not knowing does not
   change the next steps (the parser must be defensive either way), so this is
@@ -124,3 +128,11 @@ The ordering argument is information gain, not just dependency.
   (command robustness) refined. A bug filed against milestone 3 turned out
   to be already fixed during milestone 2 work. No change to direction or
   ordering.
+- 2026-08-03 — milestone 3 (command robustness) completed. All eight issues
+  closed: three bugs fixed (None-guard, non-numeric arg continuation,
+  empty-result ValueError), command-level tests added covering the acceptance
+  criterion's edge cases, and README documentation written for all three
+  commands. Milestone 4 (configurable chart definitions) refined into five
+  work items. The field-materialization research (#6) remains open but does
+  not block the config surface — the `hitlists` config key is the same
+  regardless of whether per-chart fields are materialized or computed.
