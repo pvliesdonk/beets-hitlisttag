@@ -297,3 +297,152 @@ class TestHitlist:
         out = capsys.readouterr().out
         assert "Missing" in out
         assert "2" in out
+
+
+# ── config-driven hitlists ────────────────────────────────────────────────
+
+
+class TestConfigDrivenHitlists:
+    """The `hitlists` config key drives which per-chart fields exist.
+
+    Covers custom definitions, empty config, default fallback, and the
+    unknown-chart guard — all read from config rather than hardcoded.
+    """
+
+    def _opts(self, **kwargs):
+        defaults = {"format": None, "show_missing": False}
+        defaults.update(kwargs)
+        return SimpleNamespace(**defaults)
+
+    def test_default_fallback_uses_shipped_defaults(self, env):
+        helper, plugin = env
+        # No `hitlists` config set: the shipped defaults apply.
+        names = plugin.hitlists
+        assert "top2000" in names
+        assert "top40" in names
+        assert names["top40"] == ["year", "week"]
+
+        assert "top2000" in plugin.item_types
+        assert "top2000_score" in plugin.item_types
+        assert "top40_when" in plugin.item_types
+
+    def test_custom_hitlist_fields_appear(self, env):
+        helper, plugin = env
+        config["hitlisttag"]["hitlists"] = {"top500": ["year"]}
+
+        assert plugin.hitlists == {"top500": ["year"]}
+        assert "top500" in plugin.item_types
+        assert "top500_score" in plugin.item_types
+        assert "top500_highest" in plugin.item_types
+        assert "top500_when" in plugin.item_types
+        # A present `hitlists` key replaces the defaults, it does not merge.
+        assert "top2000" not in plugin.item_types
+
+    def test_custom_hitlist_populated_by_update(self, env):
+        helper, plugin = env
+        config["hitlisttag"]["hitlists"] = {"top500": ["year"]}
+        item = _add_item(
+            helper,
+            charts=ChartList([_make_chart("top500", positions={"2023": 7})]),
+            artist="Artist A",
+            title="Song A",
+            album="Album A",
+        )
+
+        plugin.update_item(item)
+
+        assert item["top500"] is True
+        assert item["top500_score"] == 100
+        assert item["top500_highest"] == "1"
+        assert item["top500_when"] == "year: 2023"
+
+    def test_show_hitlist_accepts_custom_hitlist(self, env, capsys):
+        helper, plugin = env
+        config["hitlisttag"]["hitlists"] = {"top500": ["year"]}
+        _add_item(
+            helper,
+            charts=ChartList([_make_chart("top500", positions={"2023": 2})]),
+            artist="Artist A",
+            title="Song A",
+            album="Album A",
+        )
+
+        # A custom-configured hitlist name resolves through the command,
+        # not a hardcoded set: the song is listed by position.
+        plugin.show_hitlist(helper.lib, self._opts(), ["top500", "2023"])
+
+        out = capsys.readouterr().out
+        assert "Artist A" in out
+
+    def test_empty_hitlists_generate_no_fields(self, env):
+        helper, plugin = env
+        config["hitlisttag"]["hitlists"] = {}
+
+        assert plugin.hitlists == {}
+        types = plugin.item_types
+        assert "charts" in types
+        assert "top2000" not in types
+        assert "top2000_score" not in types
+
+    def test_empty_hitlists_update_skips_charts(self, env):
+        helper, plugin = env
+        config["hitlisttag"]["hitlists"] = {}
+        item = _add_item(
+            helper,
+            charts=ChartList([_make_chart("top2000", positions={"2023": 5})]),
+            artist="Artist A",
+            title="Song A",
+            album="Album A",
+        )
+
+        # Must not raise; with no hitlists configured every chart is skipped.
+        plugin.update_item(item)
+
+        assert "top2000" not in item._values_flex
+
+    def test_empty_hitlists_command_no_crash(self, env):
+        helper, plugin = env
+        config["hitlisttag"]["hitlists"] = {}
+
+        # No hitlist given, none configured: no crash.
+        plugin.show_hitlist(helper.lib, self._opts(), [])
+        # An unknown hitlist with none configured: no crash.
+        plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+    def test_unknown_chart_with_custom_config_skipped(self, env):
+        helper, plugin = env
+        config["hitlisttag"]["hitlists"] = {"top500": ["year"]}
+        # top2000 is in the CHARTS tag but not in the custom config.
+        item = _add_item(
+            helper,
+            charts=ChartList([_make_chart("top2000", positions={"2023": 5})]),
+            artist="Artist A",
+            title="Song A",
+            album="Album A",
+        )
+
+        # Must not raise; the chart is logged and skipped, not populated.
+        plugin.update_item(item)
+
+        assert "top2000" not in item._values_flex
+        # The raw data survives in the charts blob regardless of config.
+        assert item.charts is not None
+
+    def test_malformed_hitlists_config_degrades(self, env):
+        helper, plugin = env
+        # A non-dict value is rejected wholesale rather than crashing.
+        config["hitlisttag"]["hitlists"] = "not a dict"
+
+        assert plugin.hitlists == {}
+        assert "top2000" not in plugin.item_types
+
+    def test_invalid_axes_entry_dropped(self, env):
+        helper, plugin = env
+        # A valid entry is kept; an entry whose axes are not a list of
+        # strings is dropped with a warning, leaving the rest intact.
+        config["hitlisttag"]["hitlists"] = {"good": ["year"], "bad": "not a list"}
+
+        resolved = plugin.hitlists
+        assert resolved == {"good": ["year"]}
+        assert "good" in plugin.item_types
+        assert "bad" not in plugin.item_types
