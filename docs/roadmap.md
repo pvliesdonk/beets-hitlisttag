@@ -136,3 +136,19 @@ The ordering argument is information gain, not just dependency.
   work items. The field-materialization research (#6) remains open but does
   not block the config surface — the `hitlists` config key is the same
   regardless of whether per-chart fields are materialized or computed.
+- 2026-08-03 — milestone 4 (configurable chart definitions) completed. All
+  five issues closed: `hitlists` config key added with shipped defaults (#54),
+  hardcoded `HITLISTS` replaced with config-driven definitions (#55), tests
+  covering custom/empty/fallback/guard/malformed config (#56), and README
+  documentation (#57). All seven acceptance criteria met. Milestone 5
+  (release automation) refined into two work items: release workflow (#64)
+  and release documentation (#65). The release workflow is modeled on
+  beets-plex (trusted publishing via OIDC); hatch-vcs version derivation is
+  already in place. No change to direction or ordering.
+- 2026-08-03 — milestone 5 (release automation) completed. Both issues closed:
+  a `release.yml` workflow publishes to PyPI via trusted publishing on GitHub
+  Release (#64), and `CONTRIBUTING.md` documents the development setup, checks,
+  commit and PR conventions, and the release process including the one-time
+  PyPI trusted-publisher setup (#65). The workflow is dormant until the first
+  release is cut; its PyPI prerequisites are manual and documented. This is the
+  final milestone in the roadmap. No change to direction or ordering.
