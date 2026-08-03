@@ -87,13 +87,19 @@ The ordering argument is information gain, not just dependency.
 
 ## Known unknowns
 
-- **Field materialization strategy.** The live code materializes per-chart
-  flexible fields via an explicit `chartsupdate` command; an abandoned
-  variant (`beetsplug/hitlisttag.py.template_funcs`, `evidenced`) computed
-  them on the fly as template fields. Materialized fields are queryable but
-  can go stale; computed fields are always fresh but interact differently
-  with queries. *Resolved by:* research issue #6 (no milestone — cross-cutting;
-  does not block the config surface, which is the same either way).
+- **Field materialization strategy.** *Resolved (2026-08-03).* The live code
+  materializes per-chart flexible fields via an explicit `chartsupdate`
+  command; an abandoned variant (`beetsplug/hitlisttag.py.template_funcs`,
+  `evidenced`) computed them on the fly as template fields. Research issue #6
+  confirmed that template fields are not queryable — beets'
+  `template_fields` is exclusively for path formatting (`$name` in format
+  strings) and has no query support. Flexible fields are queryable (via
+  Python-side matching on the `_flex_table`), which is the primary value
+  proposition of the per-chart fields. The staleness concern is managed by
+  the `auto` config option and the explicit `chartsupdate` command. No
+  change to the current design. `evidenced` (beets 2.12.0 source:
+  `BeetsPlugin.template_field`, `dbcore.query.FieldQuery.clause`,
+  `dbcore.db.Database._fetch`).
 - **The producer of the `CHARTS` tag.** Some external tool writes the tag
   this plugin consumes; its format stability is unknown. Not knowing does not
   change the next steps (the parser must be defensive either way), so this is
@@ -153,9 +159,9 @@ The ordering argument is information gain, not just dependency.
   release is cut; its PyPI prerequisites are manual and documented. This is the
   final milestone in the roadmap. No change to direction or ordering.
 - 2026-08-03 — **roadmap complete.** v0.1.0 released to PyPI. All five
-  milestones delivered; 32 of 33 issues closed. Research issue #6 (field
-  materialization strategy) remains open as a cross-cutting item with no
-  milestone — it does not block anything and its answer does not change the
-  config surface. No further milestones are charted. The roadmap is in a
-  terminal state: the index and milestones remain as the record of what was
-  built and why, not as a plan for future work.
+  milestones delivered; all 33 issues closed. Research issue #6 (field
+  materialization strategy) resolved: template fields are not queryable,
+  confirming the current materialized-flexible-field design. No further
+  milestones are charted. The roadmap is in a terminal state: the index
+  and milestones remain as the record of what was built and why, not as a
+  plan for future work.
