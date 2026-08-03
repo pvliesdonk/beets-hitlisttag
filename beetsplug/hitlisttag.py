@@ -23,10 +23,7 @@ log = beets_logging.getLogger("beets.hitlisttag")
 # Shipped hitlist definitions: name -> list of axis names. Used as the
 # default for the `hitlists` config key. A present key replaces these
 # defaults (it does not merge); the resolved definitions at runtime come
-# from `HitlistTag.hitlists`, which reads that config key. The
-# module-level HITLISTS_DEFINITION/HITLISTS constants below are the legacy
-# hardcoded view of the same set, still referenced until the config-driven
-# refactor lands.
+# from `HitlistTag.hitlists`, which reads that config key.
 DEFAULT_HITLISTS = {
     "top2000": ["year"],
     "top100": ["year"],
@@ -34,15 +31,6 @@ DEFAULT_HITLISTS = {
     "zwaarstelijst": ["year"],
     "kerst": ["year"],
 }
-
-HITLISTS_DEFINITION = {
-    "top2000": ["year"],
-    "top100": ["year"],
-    "top40": ["year", "week"],
-    "zwaarstelijst": ["year"],
-    "kerst": ["year"],
-}
-HITLISTS = list(HITLISTS_DEFINITION.keys())
 
 FIELDS = ["", "score", "highest", "when"]
 
@@ -121,7 +109,7 @@ class HitlistTag(BeetsPlugin):
             "charts": CHARTLISTTYPE,
         }
 
-        for h in HITLISTS:
+        for h in self.hitlists:
             out[f"{h}"] = types.BOOLEAN
             out[f"{h}_score"] = types.INTEGER
             out[f"{h}_highest"] = types.STRING
@@ -258,10 +246,11 @@ class HitlistTag(BeetsPlugin):
             self._log.debug(f"No charts information for {item}")
             return
 
+        hitlists = self.hitlists
         chartlist: ChartList = item.charts
         self._log.debug(f"Parsing charts json for {item}:")
         for chart in chartlist:
-            if chart.name not in HITLISTS:
+            if chart.name not in hitlists:
                 self._log.error(
                     f"Unknown hitlist: {chart.name}. "
                     f"Will not parse into flexible fields."
@@ -294,20 +283,21 @@ class HitlistTag(BeetsPlugin):
     def show_hitlist(
         self, lib: Library, opts: CommonOptionsParser, args: list[str]
     ) -> None:
+        hitlists = self.hitlists
+        available = "/".join(hitlists)
         if len(args) < 1:
-            self._log.error(f"No hitlist provided. Options are [{'/'.join(HITLISTS)}]")
+            self._log.error(f"No hitlist provided. Options are [{available}]")
             return
         # parse arguments
-        if args[0] not in HITLISTS:
+        if args[0] not in hitlists:
             self._log.error(
-                f"Unknown hitlist requested ({args[0]}). "
-                f"Options are [{'/'.join(HITLISTS)}]"
+                f"Unknown hitlist requested ({args[0]}). Options are [{available}]"
             )
             return
         else:
             hitlist = args[0]
 
-        expected_args = HITLISTS_DEFINITION[hitlist]
+        expected_args = hitlists[hitlist]
         if len(args) != 1 + len(expected_args):
             self._log.error(
                 f"Not enough arguments for hitlist {hitlist}. "
