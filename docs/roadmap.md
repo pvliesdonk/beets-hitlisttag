@@ -152,3 +152,10 @@ The ordering argument is information gain, not just dependency.
   PyPI trusted-publisher setup (#65). The workflow is dormant until the first
   release is cut; its PyPI prerequisites are manual and documented. This is the
   final milestone in the roadmap. No change to direction or ordering.
+- 2026-08-03 — **roadmap complete.** v0.1.0 released to PyPI. All five
+  milestones delivered; 32 of 33 issues closed. Research issue #6 (field
+  materialization strategy) remains open as a cross-cutting item with no
+  milestone — it does not block anything and its answer does not change the
+  config surface. No further milestones are charted. The roadmap is in a
+  terminal state: the index and milestones remain as the record of what was
+  built and why, not as a plan for future work.
