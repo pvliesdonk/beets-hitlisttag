@@ -35,10 +35,19 @@ def _make_chart(
     return chart
 
 
-def _add_item(helper, charts=None, **kwargs) -> Item:
-    """Add an item to the helper's library, optionally setting its charts."""
+_UNSET = object()
+
+
+def _add_item(helper, charts=_UNSET, **kwargs) -> Item:
+    """Add an item to the helper's library, optionally setting its charts.
+
+    ``charts`` defaults to a sentinel so that ``None`` is a distinct, explicit
+    value: passing ``charts=None`` sets ``item.charts = None`` (the malformed-
+    tag path), while omitting ``charts`` leaves the field unset (the no-charts
+    path).
+    """
     item = helper.add_item(**kwargs)
-    if charts is not None:
+    if charts is not _UNSET:
         item.charts = charts
         item.store()
     return item
