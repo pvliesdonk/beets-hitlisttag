@@ -48,13 +48,14 @@ Reconstructs a full chart for a given hitlist and year (or year/week)
 from the library, listing songs in position order.
 
 ```
-beet hitlist [-M] [-f FORMAT] HITLIST YEAR [WEEK]
+beet hitlist [-M] [-p] [-f FORMAT] HITLIST YEAR [WEEK]
 ```
 
 The built-in hitlists are `top2000`, `top100`, `top40`,
 `zwaarstelijst`, and `kerst`. All take a year; `top40` also takes a
 week. The `-M` / `--missing` flag reports any positions that are absent
-from the library. The `-f` / `--format` option overrides the display
+from the library. The `-p` / `--path` flag prints file paths instead of
+the formatted string. The `-f` / `--format` option overrides the display
 format (default: `$artist - $album - $title`).
 
 ```
