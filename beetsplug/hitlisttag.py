@@ -1,5 +1,6 @@
 from typing import Any
 
+import confuse
 from beets import library, ui
 from beets import logging as beets_logging
 from beets.dbcore import Results, types
@@ -18,6 +19,21 @@ from beetsplug.charts import (
 )
 
 log = beets_logging.getLogger("beets.hitlisttag")
+
+# Shipped hitlist definitions: name -> list of axis names. Used as the
+# default for the `hitlists` config key. A present key replaces these
+# defaults (it does not merge); the resolved definitions at runtime come
+# from `HitlistTag.hitlists`, which reads that config key. The
+# module-level HITLISTS_DEFINITION/HITLISTS constants below are the legacy
+# hardcoded view of the same set, still referenced until the config-driven
+# refactor lands.
+DEFAULT_HITLISTS = {
+    "top2000": ["year"],
+    "top100": ["year"],
+    "top40": ["year", "week"],
+    "zwaarstelijst": ["year"],
+    "kerst": ["year"],
+}
 
 HITLISTS_DEFINITION = {
     "top2000": ["year"],
@@ -117,7 +133,12 @@ class HitlistTag(BeetsPlugin):
         super().__init__()
 
         self.config.add(
-            {"auto": False, "overwrite": False, "format": "$artist - $album - $title"}
+            {
+                "auto": False,
+                "overwrite": False,
+                "format": "$artist - $album - $title",
+                "hitlists": DEFAULT_HITLISTS,
+            }
         )
 
         if self.config["auto"]:
@@ -127,6 +148,42 @@ class HitlistTag(BeetsPlugin):
         # potentially hook to database_change??
 
         self.add_media_field("charts", charts_field)
+
+    @property
+    def hitlists(self) -> dict[str, list[str]]:
+        """Resolved hitlist definitions (name -> list of axis names).
+
+        The `hitlists` key is registered with the shipped DEFAULT_HITLISTS
+        by `config.add`, so absent user configuration resolves to those
+        defaults. A malformed or empty value degrades to an empty dict so
+        no per-chart fields are generated and commands report an empty
+        hitlist set rather than crash. Individual entries whose axes are
+        not a list of strings are dropped with a warning; the rest are
+        kept.
+        """
+        try:
+            raw = self.config["hitlists"].get(dict)
+        except confuse.NotFoundError:
+            return dict(DEFAULT_HITLISTS)
+        except confuse.ConfigValueError as err:
+            self._log.warning("hitlists config is malformed, ignoring: {}", err)
+            return {}
+
+        if not isinstance(raw, dict) or not raw:
+            self._log.warning(
+                "hitlists config is empty; no per-chart fields will be generated"
+            )
+            return {}
+
+        resolved: dict[str, list[str]] = {}
+        for name, axes in raw.items():
+            if not isinstance(axes, list) or not all(isinstance(a, str) for a in axes):
+                self._log.warning(
+                    "hitlist '{}' has invalid axes {!r}; skipping", name, axes
+                )
+                continue
+            resolved[name] = axes
+        return resolved
 
     def loaded(self):
         self._log.info("HitlistTag plugin loaded")
