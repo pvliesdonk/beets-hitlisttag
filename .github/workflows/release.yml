@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read # actions/checkout needs to clone the repo
       id-token: write # OIDC token for trusted publishing
     steps:
       - uses: actions/checkout@v4
