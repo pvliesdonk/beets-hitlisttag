@@ -1,0 +1,26 @@
+name: Release
+
+# Publishes to PyPI via trusted publishing when a GitHub Release is published.
+# Dormant until a release is cut. PyPI's trusted publisher is configured for
+# this workflow filename and the `pypi` environment; see CONTRIBUTING.md for
+# the one-time setup.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # OIDC token for trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # hatch-vcs derives the version from the release tag
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
