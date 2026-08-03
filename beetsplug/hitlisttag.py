@@ -173,7 +173,7 @@ class HitlistTag(BeetsPlugin):
         items = lib.items(ui.decargs(args))
         item: Item
         for item in items:
-            if "charts" not in item._values_flex.keys():
+            if "charts" not in item._values_flex.keys() or item.charts is None:
                 self._log.info("No charts information for {0}", item)
                 continue
 
@@ -188,7 +188,7 @@ class HitlistTag(BeetsPlugin):
         items = lib.items(ui.decargs(args))
         item: Item
         for item in items:
-            if "charts" not in item._values_flex.keys():
+            if "charts" not in item._values_flex.keys() or item.charts is None:
                 self._log.info("No charts information for {0}", item)
                 continue
             chartlist: ChartList = item.charts
@@ -197,7 +197,7 @@ class HitlistTag(BeetsPlugin):
                 ui.print_(chart.summary())
 
     def update_item(self, item: Item) -> None:
-        if "charts" not in item._values_flex.keys():
+        if "charts" not in item._values_flex.keys() or item.charts is None:
             self._log.debug(f"No charts information for {item}")
             return
 
@@ -271,7 +271,7 @@ class HitlistTag(BeetsPlugin):
 
         items = lib.items()
         for item in items:
-            if "charts" not in item._values_flex.keys():
+            if "charts" not in item._values_flex.keys() or item.charts is None:
                 continue  # no chart information
 
             chartlist: ChartList = item.charts
