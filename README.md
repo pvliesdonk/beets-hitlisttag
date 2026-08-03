@@ -51,17 +51,44 @@ from the library, listing songs in position order.
 beet hitlist [-M] [-p] [-f FORMAT] HITLIST YEAR [WEEK]
 ```
 
-The built-in hitlists are `top2000`, `top100`, `top40`,
-`zwaarstelijst`, and `kerst`. All take a year; `top40` also takes a
-week. The `-M` / `--missing` flag reports any positions that are absent
-from the library. The `-p` / `--path` flag prints file paths instead of
-the formatted string. The `-f` / `--format` option overrides the display
-format (default: `$artist - $album - $title`).
+The available hitlists are defined in configuration (see
+[Configuration](#configuration)); the shipped defaults are `top2000`,
+`top100`, `top40`, `zwaarstelijst`, and `kerst`. All take a year; `top40`
+also takes a week. The `-M` / `--missing` flag reports any positions that
+are absent from the library. The `-p` / `--path` flag prints file paths
+instead of the formatted string. The `-f` / `--format` option overrides
+the display format (default: `$artist - $album - $title`).
 
 ```
 beet hitlist top2000 2023
 beet hitlist -M top40 2024 5
 ```
+
+## Configuration
+
+Which hitlists exist and what axes each one uses are defined by the
+`hitlists` key under the `hitlisttag` section of `config.yaml`. It maps
+a hitlist name to a list of axis names — the arguments `hitlist` expects
+for that chart:
+
+```yaml
+hitlisttag:
+  hitlists:
+    top2000: [year]
+    top100: [year]
+    top40: [year, week]
+    zwaarstelijst: [year]
+    kerst: [year]
+```
+
+Omitting the key falls back to the defaults above. A hitlist takes one
+argument per axis, in order; a single-axis hitlist like `top2000` takes a
+year, while the two-axis `top40` takes a year and a week.
+
+A chart present in a file's `CHARTS` tag but absent from the configured
+hitlists is still stored in the `charts` blob, but its per-chart
+flexible fields are not materialized — only configured hitlists get
+queryable `name`, `name_score`, `name_highest`, and `name_when` fields.
 
 ## Status
 
