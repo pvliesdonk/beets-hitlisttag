@@ -35,6 +35,8 @@ plugins:
   - hitlisttag
 ```
 
+(beets also accepts the space-separated form, `plugins: hitlisttag`.)
+
 ## The `CHARTS` tag
 
 The plugin reads chart history from a custom `CHARTS` file tag. The tag
@@ -50,13 +52,13 @@ as:
 The tag value is a JSON array of chart objects. Each object has five
 required keys:
 
-| Key          | Type            | Meaning                                                                 |
-| ------------ | --------------- | ----------------------------------------------------------------------- |
-| `name`       | string          | Chart name, e.g. `top2000` — matched against the configured hitlists     |
-| `score`      | integer         | Aggregate score for the song in this chart, stored and shown as-is       |
-| `highest`    | integer         | Best (lowest-numbered) position the song ever reached in this chart      |
-| `chart_type` | list of strings | The chart's axes, e.g. `["year"]` or `["year", "week"]`                  |
-| `positions`  | object          | Nested positions, one nesting level per axis (see below)                 |
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `name` | string | Chart name, e.g. `top2000` — matched against the configured hitlists |
+| `score` | integer | Aggregate score for the song in this chart, stored and shown as-is |
+| `highest` | integer | Best (lowest-numbered) position the song ever reached in this chart |
+| `chart_type` | list of strings | The chart's axes, e.g. `["year"]` or `["year", "week"]` |
+| `positions` | object | Nested positions, one nesting level per axis (see below) |
 
 `positions` is keyed by axis values (JSON object keys, so numbers appear
 as strings), nested in the order given by `chart_type`, with the chart
