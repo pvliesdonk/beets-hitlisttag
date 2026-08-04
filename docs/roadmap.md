@@ -298,3 +298,7 @@ wants realistic data before acquisition lands.
   default). One cross-milestone edge encoded: refining milestone 7 is
   blocked by the edition format (#75), since ingestors write that format.
   No change to direction or ordering.
+- 2026-08-04 — direction addition (`stated`): the ingestor pluggability
+  promise includes developer documentation — how to implement another
+  acquirer must be documented, not just possible. To be covered when
+  milestone 7 is refined; no change to ordering.
