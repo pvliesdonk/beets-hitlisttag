@@ -17,7 +17,14 @@ queryable fields, chart display, and reconstruction of a full chart for a
 given year/week from the library. `stated` (purpose), `evidenced` (mechanics:
 `beetsplug/charts.py`, `beetsplug/hitlisttag.py`).
 
+A second roadmap (2026-08-04) extends the ambition from consuming the tag to
+producing it: acquiring chart data from public sources into a local,
+library-independent dataset, and generating `CHARTS` tags for library tracks
+from that dataset. `stated`.
+
 ## Direction
+
+### Consuming CHARTS (first roadmap, delivered 2026-08-03)
 
 - Turn the working prototype into a clean, installable, tested package
   modeled on [beets-plex](https://github.com/pvliesdonk/beets-plex):
@@ -55,35 +62,98 @@ given year/week from the library. `stated` (purpose), `evidenced` (mechanics:
   this plugin. `stated` (2026-07-31). Their removal is tracked as a work item
   in the chart-model-correctness milestone.
 
+### Generating CHARTS (second roadmap, charted 2026-08-04)
+
+- **Standalone.** Independent of the external `tagger` project. That project
+  is reference material only — the user calls it suitable as a reference
+  though not elegantly coded, and its future is uncertain — so nothing here
+  may depend on it. `stated` (2026-08-04). Its old flow canonicalized library
+  files via MusicBrainz and matched hitlist entries against them, which was
+  inefficient and only worked because the library was near-complete per
+  chart. `stated`.
+- **Single package, acquisition included.** Acquisition tooling ships in this
+  package as an additional executable, not as a separate distribution:
+  without acquisition the generation side is useless, because chart data
+  cannot be redistributed (see next item). `stated` (2026-08-04).
+- **No chart data is shipped or published.** Complete publication of chart
+  listings likely raises copyright problems for at least some lists.
+  `stated` (2026-08-04). Consequence: each user regenerates the dataset
+  locally from public sources; the project distributes the means, never the
+  data. `derived`.
+- **Acquisition is pluggable.** Per-chart *ingestors* — scrapers, API
+  fetchers, file downloaders, however a chart's data is obtained — that
+  third parties can add for their own hitlists without modifying this
+  package. `stated` (generalized scrapers/fetchers/downloaders, 2026-08-04);
+  `derived` (the ingestor framing as broader than scraping).
+- **Match direction is song → hitlists.** beets works per track, so the
+  dataset must answer "which chart positions does this song have", not
+  "which library track fills this chart slot". `stated` (2026-08-04).
+- **A song ontology is the join point.** Chart entries and songs are
+  distinct: the same song appears under different spellings across editions
+  and charts, and some entries are multi-song singles (double A-sides) that
+  must credit each constituent song. Entries resolve to songs once, inside
+  the dataset; library tracks resolve to songs at beets time — neither side
+  needs to know the other's mess. `stated` (the need, the cross-hitlist
+  mismatch, multi-song singles; 2026-08-04); `derived` (the entry/song split
+  as the mechanism).
+- **Variant policy.** An explicit version qualifier ("live", "remix", …)
+  makes a distinct song; how strictly the beets side matches variants is
+  user-configurable. `stated` (2026-08-04; originated as an agent proposal,
+  endorsed by the user).
+- **Raw data is disposable; curation is precious.** Acquired editions are
+  re-acquirable at will; hand-curation (aliases, entry–song links, merges,
+  splits) must survive full re-acquisition. `derived`.
+- **The existing `CHARTS` tag format is the unchanged output contract.**
+  Generated tags must be indistinguishable from externally produced ones to
+  the rest of the plugin. When generating, a chart's object in a track's tag
+  is replaced wholesale from the dataset — the dataset is the source of
+  truth — while charts the dataset does not know remain untouched. `stated`
+  (replace-per-chart, 2026-08-04); `derived` (format stability as contract).
+- **Score.** A positional-points sum — position *p* in an edition of size
+  *N* contributes *N*+1−*p* — is the official scoring method for the Top 40
+  and the default meaning of the tag's `score` here; alternatives remain
+  open. `stated` (2026-08-04).
+
 ## Milestones and order
 
-Milestones (each holds its acceptance criterion in its GitHub description):
+Milestones 1–5 (the first roadmap) are delivered; see History. Current
+milestones (each holds its acceptance criterion in its GitHub description):
 
-1. [Package scaffolding](https://github.com/pvliesdonk/beets-hitlisttag/milestone/1)
-2. [Chart model correctness](https://github.com/pvliesdonk/beets-hitlisttag/milestone/2)
-3. [Command robustness](https://github.com/pvliesdonk/beets-hitlisttag/milestone/3)
-4. [Configurable chart definitions](https://github.com/pvliesdonk/beets-hitlisttag/milestone/4)
-5. [Release automation](https://github.com/pvliesdonk/beets-hitlisttag/milestone/5)
+6. [Chart dataset and tag generation](https://github.com/pvliesdonk/beets-hitlisttag/milestone/6)
+7. [Acquisition framework](https://github.com/pvliesdonk/beets-hitlisttag/milestone/7)
+8. [Song ontology and curation](https://github.com/pvliesdonk/beets-hitlisttag/milestone/8)
+9. [Matching beyond exact](https://github.com/pvliesdonk/beets-hitlisttag/milestone/9)
+10. [Chart coverage and upkeep](https://github.com/pvliesdonk/beets-hitlisttag/milestone/10)
 
-The ordering argument is information gain, not just dependency.
+The ordering argument is information gain, not just dependency. `derived`
+throughout.
 
-1. **Package scaffolding** first: it is cheap, it resolves the largest
-   unknown of everything after it (whether the plugin loads at all when
-   properly packaged — today a sibling absolute import suggests it cannot,
-   see the bug issues), and it produces the test harness every later
-   milestone needs to state its own acceptance honestly. `derived`.
-2. **Chart model correctness** before **command robustness**: the commands
-   sit on the model, so fixing the model first means command tests are
-   written once against corrected behavior instead of twice. `derived`.
-3. **Configurable chart definitions** after **command robustness**: the
-   commands are the consumers of hitlist definitions, so making them robust
-   first means the config-driven refactor is tested against known-correct
-   behavior rather than debugging both the refactor and pre-existing command
-   bugs at once. The field-materialization research (#6) does not block this
-   milestone — the `hitlists` config key is the same regardless of whether
-   per-chart fields are materialized or computed. `derived`.
-4. **Release automation** last: lowest information gain, independent of the
-   rest, and pointless before there is something worth installing. `derived`.
+6. **Chart dataset and tag generation** first: the end-to-end thin slice —
+   hand-authorable dataset, exact-normalized lookup, tag writing — is the
+   cheapest full-pipeline proof. It resolves the largest global unknown
+   (whether per-track lookup against a local dataset is viable and pleasant
+   inside beets), and it fixes the dataset contract that every later
+   milestone consumes. It is also immediately useful even hand-fed.
+7. **Acquisition framework** second: real scraped data at scale is exactly
+   the evidence the ontology design needs — how messy entries actually are,
+   how often spellings diverge, how common multi-song entries are. Designing
+   the ontology before seeing real data would be guessing. Top 2000 first
+   within the milestone: yearly snapshot, lowest churn. (The tagger project
+   independently reached the same first-chart conclusion — corroboration,
+   not a dependency.)
+8. **Song ontology and curation** third, designed against the observed mess
+   rather than the imagined one.
+9. **Matching beyond exact** after the ontology: fuzzy and interactive
+   matching are only worth their complexity for the residue left after
+   normalization plus aliases, and the earlier milestones' unmatched-track
+   reporting quantifies that residue before we build against it.
+10. **Chart coverage and upkeep** last: breadth (Top 40 weekly, Top 100) and
+    cadence are operational concerns best not debugged at the same time as
+    core design.
+
+The order is a lean, not a wall: e.g. seeding the song catalog from an
+already-tagged library (milestone 8) may be pulled earlier if milestone 6
+wants realistic data before acquisition lands.
 
 ## Known unknowns
 
@@ -103,7 +173,38 @@ The ordering argument is information gain, not just dependency.
 - **The producer of the `CHARTS` tag.** Some external tool writes the tag
   this plugin consumes; its format stability is unknown. Not knowing does not
   change the next steps (the parser must be defensive either way), so this is
-  recorded, not ticketed. `derived`.
+  recorded, not ticketed. `derived`. *Superseded in part (2026-08-04):* the
+  second roadmap makes this plugin a producer itself; externally written tags
+  may still occur, so the defensive-parser stance stands.
+- **On-disk dataset form.** How editions, the curation overlay, and the
+  per-song lookup index are laid out on disk. Resolved by: refining
+  milestone 6. `derived`.
+- **Score beyond the Top 40.** The positional-points sum is official for the
+  Top 40 (`stated`); whether the other charts define an official score or
+  borrow the same formula is unknown. Resolved by: refining milestone 6
+  (score must be definable per chart from the start). `derived`.
+- **Source viability.** Which public sources exist per chart, their terms,
+  and whether anti-bot measures apply. Not knowing changes nothing now — the
+  ingestor abstraction is source-agnostic by design. Resolved by: refining
+  milestone 7 (Top 2000) and milestone 10 (Top 40, Top 100). `derived`.
+- **Curation scale.** How many entries need hand attention after automatic
+  normalization — this decides how much curation tooling milestone 8 must
+  carry. Resolved by: refining milestone 8 against milestone 7's real data.
+  `derived`.
+- **Residual miss-rate.** Whether fuzzy matching is needed at meaningful
+  scale once exact-normalized lookup plus aliases exist; if the residue is
+  tiny, milestone 9 shrinks — a possible change of direction, recorded here
+  so it is checked rather than assumed. Resolved by: refining milestone 9 on
+  the unmatched-track evidence from milestones 6–8. `derived`.
+- **External-ID enrichment.** Whether attaching MusicBrainz (or other)
+  identifiers to songs in the dataset pays for itself as a match path —
+  amortized once in the dataset, never per-library as in the old tagger
+  flow. Resolved by: refining milestone 9. `derived`.
+- **zwaarstelijst and kerst acquisition.** These shipped chart definitions
+  are station-specific lists with no committed acquisition plan; they are
+  expected to arrive, if at all, as user-authored ingestors through the
+  plug-in mechanism, which also serves as its proof. Not knowing changes
+  nothing now; recorded, not ticketed. `derived`.
 - **beets version floor.** beets-plex pins `beets>=2.12`; this plugin
   declares the same dependency floor in `pyproject.toml:28` and CI validates
   the plugin against whatever version `pip` resolves for it (`evidenced`:
@@ -158,10 +259,22 @@ The ordering argument is information gain, not just dependency.
   PyPI trusted-publisher setup (#65). The workflow is dormant until the first
   release is cut; its PyPI prerequisites are manual and documented. This is the
   final milestone in the roadmap. No change to direction or ordering.
-- 2026-08-03 — **roadmap complete.** v0.1.0 released to PyPI. All five
+- 2026-08-03 — **first roadmap complete.** v0.1.0 released to PyPI. All five
   milestones delivered; all 33 issues closed. Research issue #6 (field
   materialization strategy) resolved: template fields are not queryable,
   confirming the current materialized-flexible-field design. No further
   milestones are charted. The roadmap is in a terminal state: the index
   and milestones remain as the record of what was built and why, not as a
   plan for future work.
+- 2026-08-04 — **re-charted: second roadmap.** The ambition extends from
+  consuming the `CHARTS` tag to producing it, ending the 2026-08-03 terminal
+  state. Five new milestones (6–10) charted with the ordering argument
+  above; no feature issues yet. Direction decisions stated by the user this
+  session: standalone from the `tagger` project (reference only); a single
+  package including a bundled, pluggable acquisition executable; no
+  redistribution of chart data (copyright); song→hitlist as the match
+  direction; a song ontology handling cross-hitlist spelling variance and
+  multi-song singles; the Top 40's official positional-points sum as the
+  default score; replace-per-chart semantics when writing generated tags.
+  The "producer of the CHARTS tag" unknown is superseded in part — this
+  plugin becomes a producer.
