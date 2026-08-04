@@ -176,13 +176,22 @@ wants realistic data before acquisition lands.
   recorded, not ticketed. `derived`. *Superseded in part (2026-08-04):* the
   second roadmap makes this plugin a producer itself; externally written tags
   may still occur, so the defensive-parser stance stands.
-- **On-disk dataset form.** How editions, the curation overlay, and the
-  per-song lookup index are laid out on disk. Resolved by: refining
-  milestone 6. `derived`.
-- **Score beyond the Top 40.** The positional-points sum is official for the
-  Top 40 (`stated`); whether the other charts define an official score or
-  borrow the same formula is unknown. Resolved by: refining milestone 6
-  (score must be definable per chart from the start). `derived`.
+- **On-disk dataset form.** *Resolved (2026-08-04, milestone 6 refinement).*
+  Editions are one human-authorable JSON file each, in a dataset directory
+  set by plugin config; a file declares its chart, axis values, declared
+  size, and ranked raw entries. The per-song lookup index is built in
+  memory at command time — chart datasets are small enough — and a
+  persisted compiled index is deliberately deferred until performance
+  evidence demands it (recorded, not ticketed). The curation overlay's form
+  is milestone 8's decision, not made here. `derived` (decisions carried by
+  the milestone 6 feature issues).
+- **Score beyond the Top 40.** *Resolved structurally (2026-08-04,
+  milestone 6 refinement).* The positional-points sum over declared edition
+  sizes — official for the Top 40 (`stated`) — ships as the default for
+  every chart, and the computation is resolved per chart internally so an
+  alternative definition can land without changing the dataset format or
+  tag schema. Whether any other chart defines an official score remains
+  unknown but no longer gates anything; recorded, not ticketed. `derived`.
 - **Source viability.** Which public sources exist per chart, their terms,
   and whether anti-bot measures apply. Not knowing changes nothing now — the
   ingestor abstraction is source-agnostic by design. Resolved by: refining
@@ -278,3 +287,11 @@ wants realistic data before acquisition lands.
   default score; replace-per-chart semantics when writing generated tags.
   The "producer of the CHARTS tag" unknown is superseded in part — this
   plugin becomes a producer.
+- 2026-08-04 — milestone 6 (chart dataset and tag generation) refined into
+  six work items (#75–#80): edition format/reader/fixtures, normalized
+  exact lookup, score and highest, the `chartsgen` command, tests, and
+  README documentation. Both unknowns pointing at this refinement resolved
+  (on-disk dataset form; score definable per chart with the positional-sum
+  default). One cross-milestone edge encoded: refining milestone 7 is
+  blocked by the edition format (#75), since ingestors write that format.
+  No change to direction or ordering.
