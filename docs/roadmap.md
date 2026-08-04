@@ -98,7 +98,8 @@ from that dataset. `stated`.
   as the mechanism).
 - **Variant policy.** An explicit version qualifier ("live", "remix", …)
   makes a distinct song; how strictly the beets side matches variants is
-  user-configurable. `derived` proposal, endorsed by the user (2026-08-04).
+  user-configurable. `stated` (2026-08-04; originated as an agent proposal,
+  endorsed by the user).
 - **Raw data is disposable; curation is precious.** Acquired editions are
   re-acquirable at will; hand-curation (aliases, entry–song links, merges,
   splits) must survive full re-acquisition. `derived`.
@@ -127,28 +128,28 @@ milestones (each holds its acceptance criterion in its GitHub description):
 The ordering argument is information gain, not just dependency. `derived`
 throughout.
 
-1. **Chart dataset and tag generation** first: the end-to-end thin slice —
+6. **Chart dataset and tag generation** first: the end-to-end thin slice —
    hand-authorable dataset, exact-normalized lookup, tag writing — is the
    cheapest full-pipeline proof. It resolves the largest global unknown
    (whether per-track lookup against a local dataset is viable and pleasant
    inside beets), and it fixes the dataset contract that every later
    milestone consumes. It is also immediately useful even hand-fed.
-2. **Acquisition framework** second: real scraped data at scale is exactly
+7. **Acquisition framework** second: real scraped data at scale is exactly
    the evidence the ontology design needs — how messy entries actually are,
    how often spellings diverge, how common multi-song entries are. Designing
    the ontology before seeing real data would be guessing. Top 2000 first
    within the milestone: yearly snapshot, lowest churn. (The tagger project
    independently reached the same first-chart conclusion — corroboration,
    not a dependency.)
-3. **Song ontology and curation** third, designed against the observed mess
+8. **Song ontology and curation** third, designed against the observed mess
    rather than the imagined one.
-4. **Matching beyond exact** after the ontology: fuzzy and interactive
+9. **Matching beyond exact** after the ontology: fuzzy and interactive
    matching are only worth their complexity for the residue left after
    normalization plus aliases, and the earlier milestones' unmatched-track
    reporting quantifies that residue before we build against it.
-5. **Chart coverage and upkeep** last: breadth (Top 40 weekly, Top 100) and
-   cadence are operational concerns best not debugged at the same time as
-   core design.
+10. **Chart coverage and upkeep** last: breadth (Top 40 weekly, Top 100) and
+    cadence are operational concerns best not debugged at the same time as
+    core design.
 
 The order is a lean, not a wall: e.g. seeding the song catalog from an
 already-tagged library (milestone 8) may be pulled earlier if milestone 6
