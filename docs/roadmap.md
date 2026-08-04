@@ -84,7 +84,10 @@ from that dataset. `stated`.
   fetchers, file downloaders, however a chart's data is obtained — that
   third parties can add for their own hitlists without modifying this
   package. `stated` (generalized scrapers/fetchers/downloaders, 2026-08-04);
-  `derived` (the ingestor framing as broader than scraping).
+  `derived` (the ingestor framing as broader than scraping). The
+  pluggability promise includes developer documentation: how to implement
+  another acquirer must be documented, not just possible. `stated`
+  (2026-08-04); picked up when the acquisition milestone is refined.
 - **Match direction is song → hitlists.** beets works per track, so the
   dataset must answer "which chart positions does this song have", not
   "which library track fills this chart slot". `stated` (2026-08-04).
