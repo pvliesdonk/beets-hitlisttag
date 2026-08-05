@@ -8,8 +8,8 @@ unexpected types, as the write path's encoding contract requires.
 
 from __future__ import annotations
 
-from beetsplug.charts import Chart, ChartList
 from beetsplug.hitlisttag import CHARTLISTTYPE
+from beetsplug.hitlisttag.charts import Chart, ChartList
 
 
 def _make_chart(name: str = "top2000") -> Chart:

@@ -15,7 +15,7 @@ year or per year/week in charts such as the Top 2000 or Top 40 — in a custom
 `CHARTS` file tag holding JSON, and makes that data usable inside beets:
 queryable fields, chart display, and reconstruction of a full chart for a
 given year/week from the library. `stated` (purpose), `evidenced` (mechanics:
-`beetsplug/charts.py`, `beetsplug/hitlisttag.py`).
+`beetsplug/hitlisttag/charts.py`, `beetsplug/hitlisttag/__init__.py`).
 
 A second roadmap (2026-08-04) extends the ambition from consuming the tag to
 producing it: acquiring chart data from public sources into a local,
@@ -56,7 +56,7 @@ from that dataset. `stated`.
   materialization — "not a huge problem". `stated` (2026-07-31). The raw
   data survives in the `charts` blob either way; only the queryable
   projection is skipped (`evidenced`: the current hardcoded equivalent at
-  `beetsplug/hitlisttag.py:209-213` logs and skips unknown chart names).
+  `beetsplug/hitlisttag/__init__.py:209-213` logs and skips unknown chart names).
 - The `my_song_id`, `backup_artist`, and `backup_title` fields are **out of
   scope** — they belong to the external `nl.liesdonk.tagger` ecosystem, not
   this plugin. `stated` (2026-07-31). Their removal is tracked as a work item

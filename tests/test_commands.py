@@ -15,8 +15,8 @@ from beets import config
 from beets.library import Item
 from beets.plugins import find_plugins, load_plugins
 
-from beetsplug.charts import Chart, ChartList
 from beetsplug.hitlisttag import HitlistTag
+from beetsplug.hitlisttag.charts import Chart, ChartList
 
 
 def _make_chart(
