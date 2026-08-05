@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from beetsplug.charts import Chart, ChartList, ChartsParseException
+from beetsplug.hitlisttag.charts import Chart, ChartList, ChartsParseException
 
 
 def _make_chart(

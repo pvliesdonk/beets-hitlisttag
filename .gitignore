@@ -205,6 +205,7 @@ tempCodeRunnerFile.py
 
 # Claude Code workspace artifacts
 .claude/
+docs/superpowers/
 
 # Ruff stuff:
 .ruff_cache/

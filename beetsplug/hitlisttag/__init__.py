@@ -10,7 +10,7 @@ from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
 from beets.ui import CommonOptionsParser, Subcommand
 
-from beetsplug.charts import (
+from .charts import (
     Chart,
     ChartList,
     ChartsParseException,
