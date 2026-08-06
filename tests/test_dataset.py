@@ -201,3 +201,25 @@ def test_symlinked_subdirectory_is_not_followed(tmp_path):
     result = read_dataset(root, HITLISTS, log)
     # top2000 sits behind the symlink and must not be followed.
     assert [d.chart for d in result] == ["top40"]
+
+
+def test_dataset_dir_property_resolves_and_defaults_to_none():
+    from beets import config
+    from beets.plugins import find_plugins, load_plugins
+    from beets.test.helper import TestHelper
+
+    from beetsplug.hitlisttag import HitlistTag
+
+    helper = TestHelper()
+    with helper:
+        config["plugins"] = ["hitlisttag"]
+        load_plugins()
+        plugin = next(p for p in find_plugins() if isinstance(p, HitlistTag))
+
+        plugin.config["dataset_dir"] = None
+        assert plugin.dataset_dir is None
+
+        plugin.config["dataset_dir"] = "/tmp/charts"
+        resolved = plugin.dataset_dir
+        assert isinstance(resolved, Path)
+        assert resolved == Path("/tmp/charts")
