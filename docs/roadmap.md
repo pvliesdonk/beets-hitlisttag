@@ -179,15 +179,24 @@ wants realistic data before acquisition lands.
   recorded, not ticketed. `derived`. *Superseded in part (2026-08-04):* the
   second roadmap makes this plugin a producer itself; externally written tags
   may still occur, so the defensive-parser stance stands.
-- **On-disk dataset form.** *Resolved (2026-08-04, milestone 6 refinement).*
-  Editions are one human-authorable JSON file each, in a dataset directory
-  set by plugin config; a file declares its chart, axis values, declared
-  size, and ranked raw entries. The per-song lookup index is built in
-  memory at command time — chart datasets are small enough — and a
-  persisted compiled index is deliberately deferred until performance
-  evidence demands it (recorded, not ticketed). The curation overlay's form
-  is milestone 8's decision, not made here. `derived` (decisions carried by
-  the milestone 6 feature issues).
+- **On-disk dataset form.** *Resolved (2026-08-04, refined 2026-08-06 during
+  #75).* The dataset is one human-authorable JSON file **per hitlist**, in a
+  dataset directory set by plugin config. Each file holds a `songs` table (a
+  file-local id mapped to artist/title) and a list of `editions`; an edition
+  declares its axis values and declared size, and its entries reference songs
+  by id. A song persisting across editions of the hitlist is stored once and
+  referenced by id; a single crediting several songs (double A-side, early
+  multi-song single) is one entry citing several ids at a single rank, so
+  positions stay unique within an edition. Song ids are hitlist-scoped and
+  minted per new song, so acquisition never coordinates ids across charts.
+  The per-song lookup index is built in memory at command time — chart
+  datasets are small enough — and a persisted compiled index is deliberately
+  deferred until performance evidence demands it (recorded, not ticketed).
+  The curation overlay's form is milestone 8's decision, not made here. Open
+  known-unknown: whether a wholesale re-acquisition must preserve minted ids
+  so milestone 7's ontology can link to them durably. `stated` (per-hitlist
+  songs-table with hitlist-scoped minted ids, 2026-08-06); `derived` (the
+  normalized shape).
 - **Score beyond the Top 40.** *Resolved structurally (2026-08-04,
   milestone 6 refinement).* The positional-points sum over declared edition
   sizes — official for the Top 40 (`stated`) — ships as the default for
@@ -302,3 +311,9 @@ wants realistic data before acquisition lands.
   promise includes developer documentation — how to implement another
   acquirer must be documented, not just possible. To be covered when
   milestone 7 is refined; no change to ordering.
+- 2026-08-06 — dataset format refined (`stated`) while implementing #75: one
+  file **per hitlist** (a `songs` table plus `editions` that reference songs
+  by id) rather than one file per edition, removing the string duplication of
+  a song's run across editions. Song ids are hitlist-scoped and minted per new
+  song. New known-unknown recorded: minted-id stability across wholesale
+  re-acquisition versus milestone 7's ontology links. No change to ordering.
