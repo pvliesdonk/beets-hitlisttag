@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import confuse
@@ -126,6 +127,7 @@ class HitlistTag(BeetsPlugin):
                 "overwrite": False,
                 "format": "$artist - $album - $title",
                 "hitlists": DEFAULT_HITLISTS,
+                "dataset_dir": None,
             }
         )
 
@@ -172,6 +174,18 @@ class HitlistTag(BeetsPlugin):
                 continue
             resolved[name] = axes
         return resolved
+
+    @property
+    def dataset_dir(self) -> Path | None:
+        """Resolved dataset directory, or None when unconfigured.
+
+        `as_path` raises on a None value, so the unset default is guarded
+        explicitly. A set value is returned absolute and tilde-expanded,
+        resolved relative to the config directory.
+        """
+        if self.config["dataset_dir"].get() is None:
+            return None
+        return self.config["dataset_dir"].as_path()
 
     def loaded(self):
         self._log.info("HitlistTag plugin loaded")

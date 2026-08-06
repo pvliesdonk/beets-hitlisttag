@@ -1,0 +1,15 @@
+{
+  "chart": "top40",
+  "songs": {
+    "1": {"artist": "Artist A", "title": "Song A"},
+    "2": {"artist": "Artist B", "title": "Song B"},
+    "3": {"artist": "Artist C", "title": "Song C"},
+    "4": {"artist": "Artist C", "title": "Song D"}
+  },
+  "editions": [
+    {"axes": {"year": 2023, "week": 40}, "size": 40,
+     "entries": [{"position": 1, "songs": ["1"]}, {"position": 2, "songs": ["2"]}]},
+    {"axes": {"year": 2023, "week": 41}, "size": 40,
+     "entries": [{"position": 1, "songs": ["3", "4"]}, {"position": 2, "songs": ["1"]}]}
+  ]
+}
