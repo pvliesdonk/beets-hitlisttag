@@ -196,3 +196,24 @@ def test_orphan_song_not_in_any_entry_is_not_indexed():
     index = SongLookupIndex.from_datasets([data], log)
 
     assert index.lookup("orphan", "ghost").is_miss
+
+
+def test_placement_rejects_position_above_size():
+    with pytest.raises(ValueError, match="out of range"):
+        Placement(axes={"year": 2023}, position=5, size=3)
+
+
+def test_placement_rejects_position_below_one():
+    with pytest.raises(ValueError, match="out of range"):
+        Placement(axes={"year": 2023}, position=0, size=3)
+
+
+def test_placement_rejects_nonpositive_size():
+    with pytest.raises(ValueError, match="size must be"):
+        Placement(axes={"year": 2023}, position=1, size=0)
+
+
+def test_placement_accepts_valid_bounds():
+    p = Placement(axes={"year": 2023}, position=3, size=3)
+    assert p.position == 3
+    assert p.size == 3
