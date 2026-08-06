@@ -80,6 +80,81 @@ def test_malformed_json_raises_naming_file(tmp_path):
         read_dataset(tmp_path, HITLISTS, log)
 
 
+def test_invalid_utf8_file_raises_naming_file(tmp_path):
+    # UnicodeDecodeError must surface as a DatasetError naming the file.
+    (tmp_path / "bad.json").write_bytes(b"\xff\xfe not utf-8")
+    with pytest.raises(DatasetError, match="bad.json"):
+        read_dataset(tmp_path, HITLISTS, log)
+
+
+def test_non_object_top_level_rejected(tmp_path):
+    (tmp_path / "top40.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(DatasetError, match="must be an object"):
+        read_dataset(tmp_path, HITLISTS, log)
+
+
+def _del_chart(obj):
+    del obj["chart"]
+
+
+def _nonstr_chart(obj):
+    obj["chart"] = 5
+
+
+def _songs_not_object(obj):
+    obj["songs"] = []
+
+
+def _song_not_object(obj):
+    obj["songs"]["1"] = "not an object"
+
+
+def _song_missing_title(obj):
+    obj["songs"]["1"] = {"artist": "A"}
+
+
+def _editions_not_list(obj):
+    obj["editions"] = {}
+
+
+def _edition_not_object(obj):
+    obj["editions"][0] = "not an object"
+
+
+def _axes_not_object(obj):
+    obj["editions"][0]["axes"] = "not an object"
+
+
+def _entries_not_list(obj):
+    obj["editions"][0]["entries"] = {}
+
+
+def _entry_not_object(obj):
+    obj["editions"][0]["entries"][0] = "not an object"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (_del_chart, "'chart' must be a string"),
+        (_nonstr_chart, "'chart' must be a string"),
+        (_songs_not_object, "'songs' must be an object"),
+        (_song_not_object, "must be an object"),
+        (_song_missing_title, "string 'artist' and 'title'"),
+        (_editions_not_list, "'editions' must be a list"),
+        (_edition_not_object, "must be an object"),
+        (_axes_not_object, "'axes' must be an object"),
+        (_entries_not_list, "'entries' must be a list"),
+        (_entry_not_object, "non-object entry"),
+    ],
+)
+def test_structural_field_malformations_rejected(tmp_path, mutate, match):
+    obj = _valid_top40()
+    mutate(obj)
+    with pytest.raises(DatasetError, match=match):
+        _write(tmp_path, obj)
+
+
 def test_axis_names_must_match_configured_axes(tmp_path):
     obj = _valid_top40()
     obj["editions"][0]["axes"] = {"year": 2023}  # missing 'week'

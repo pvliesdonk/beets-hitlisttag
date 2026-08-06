@@ -110,7 +110,10 @@ def _read_file(
 ) -> HitlistData | None:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as err:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as err:
+        # UnicodeDecodeError is a ValueError, not an OSError: a non-UTF-8 file
+        # must still surface as a DatasetError naming the path, like every
+        # other malformed-content case.
         raise DatasetError(f"{path}: cannot read dataset file: {err}") from err
     if not isinstance(raw, dict):
         raise DatasetError(f"{path}: top-level value must be an object")
