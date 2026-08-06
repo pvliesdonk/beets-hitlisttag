@@ -114,3 +114,81 @@ def test_miss_returns_empty_result():
     assert result.placements == {}
     assert result.ambiguous_charts == set()
     assert result.is_miss
+
+
+def test_two_ids_one_chart_same_key_is_ambiguous():
+    a = Song(id="1", artist="The Fixtures", title="Song")
+    b = Song(id="2", artist="the  fixtures", title="song")  # distinct id, same key
+    data = _data(
+        "top40",
+        [a, b],
+        [Edition({"year": 2023, "week": 1}, 40, [Entry(1, [a]), Entry(2, [b])])],
+    )
+    index = SongLookupIndex.from_datasets([data], log)
+
+    result = index.lookup("the fixtures", "song")
+    assert result.ambiguous_charts == {"top40"}
+    assert "top40" not in result.placements
+
+
+def test_ambiguous_in_one_chart_hit_in_another():
+    a = Song(id="1", artist="Dup", title="X")
+    b = Song(id="2", artist="dup", title="x")
+    clean = Song(id="1", artist="Dup", title="X")
+    top40 = _data(
+        "top40",
+        [a, b],
+        [Edition({"year": 2023, "week": 1}, 40, [Entry(1, [a]), Entry(2, [b])])],
+    )
+    top2000 = _data(
+        "top2000", [clean], [Edition({"year": 2023}, 5, [Entry(4, [clean])])]
+    )
+    index = SongLookupIndex.from_datasets([top40, top2000], log)
+
+    result = index.lookup("dup", "x")
+    assert result.ambiguous_charts == {"top40"}
+    assert set(result.placements) == {"top2000"}
+
+
+def test_unnormalizable_track_reports_none():
+    a = Song(id="1", artist="A", title="T")
+    data = _data(
+        "top40", [a], [Edition({"year": 2023, "week": 1}, 40, [Entry(1, [a])])]
+    )
+    index = SongLookupIndex.from_datasets([data], log)
+
+    result = index.lookup("...", "!!!")
+    assert result.unnormalizable
+    assert result.normalized is None
+    assert result.placements == {}
+    assert not result.is_miss
+
+
+def test_dataset_song_with_empty_key_is_skipped_with_warning(caplog):
+    good = Song(id="1", artist="A", title="T")
+    bad = Song(id="2", artist="A", title="...")  # title normalizes to empty
+    data = _data(
+        "top40",
+        [good, bad],
+        [Edition({"year": 2023, "week": 1}, 40, [Entry(1, [good]), Entry(2, [bad])])],
+    )
+    with caplog.at_level(logging.WARNING):
+        index = SongLookupIndex.from_datasets([data], log)
+
+    assert "normalizes to an empty key" in caplog.text
+    assert index.lookup("a", "t").placements == {
+        "top40": [Placement(axes={"year": 2023, "week": 1}, position=1, size=40)]
+    }
+
+
+def test_orphan_song_not_in_any_entry_is_not_indexed():
+    charted = Song(id="1", artist="A", title="T")
+    orphan = Song(id="2", artist="Orphan", title="Ghost")  # in table, no entry
+    data = _data(
+        "top40",
+        [charted, orphan],
+        [Edition({"year": 2023, "week": 1}, 40, [Entry(1, [charted])])],
+    )
+    index = SongLookupIndex.from_datasets([data], log)
+
+    assert index.lookup("orphan", "ghost").is_miss
