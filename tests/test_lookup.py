@@ -150,14 +150,18 @@ def test_ambiguous_in_one_chart_hit_in_another():
     assert set(result.placements) == {"top2000"}
 
 
-def test_unnormalizable_track_reports_none():
+@pytest.mark.parametrize(
+    ("artist", "title"),
+    [("...", "!!!"), ("A", "..."), ("...", "T")],  # both, title-only, artist-only
+)
+def test_unnormalizable_track_reports_none(artist, title):
     a = Song(id="1", artist="A", title="T")
     data = _data(
         "top40", [a], [Edition({"year": 2023, "week": 1}, 40, [Entry(1, [a])])]
     )
     index = SongLookupIndex.from_datasets([data], log)
 
-    result = index.lookup("...", "!!!")
+    result = index.lookup(artist, title)
     assert result.unnormalizable
     assert result.normalized is None
     assert result.placements == {}
