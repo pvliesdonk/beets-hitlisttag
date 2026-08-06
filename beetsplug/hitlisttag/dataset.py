@@ -30,8 +30,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeGuard
 
-log = logging.getLogger(__name__)
-
 
 class DatasetError(Exception):
     """A dataset file is malformed. The message names the offending file."""
@@ -71,7 +69,7 @@ def _is_int(value: object) -> TypeGuard[int]:
 
 
 def read_dataset(
-    root: Path | str, hitlists: Mapping[str, list[str]], log
+    root: Path | str, hitlists: Mapping[str, list[str]], log: logging.Logger
 ) -> list[HitlistData]:
     """Read every edition file under ``root``.
 
@@ -97,7 +95,7 @@ def read_dataset(
     return results
 
 
-def _iter_json_files(root: Path, log):
+def _iter_json_files(root: Path, log: logging.Logger):
     def onerror(err: OSError) -> None:
         log.warning(f"cannot read dataset directory {err.filename!r}: {err}")
 
@@ -108,7 +106,7 @@ def _iter_json_files(root: Path, log):
 
 
 def _read_file(
-    path: Path, hitlists: Mapping[str, list[str]], log
+    path: Path, hitlists: Mapping[str, list[str]], log: logging.Logger
 ) -> HitlistData | None:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
