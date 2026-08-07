@@ -52,6 +52,12 @@ class Placement:
     position: int
     size: int
 
+    def __post_init__(self) -> None:
+        if self.size < 1:
+            raise ValueError(f"edition size must be >= 1, got {self.size}")
+        if not (1 <= self.position <= self.size):
+            raise ValueError(f"position {self.position} out of range 1..{self.size}")
+
 
 @dataclass
 class LookupResult:
