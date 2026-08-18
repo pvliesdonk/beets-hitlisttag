@@ -194,7 +194,7 @@ def _parse_editions(
         if not _is_int(size) or size < 1:
             raise DatasetError(f"{path}: edition {axes} 'size' must be an integer >= 1")
         try:
-            entries = _parse_entries(ed, path, size, songs, axes)
+            entries = _parse_entries(ed, path, songs, axes)
             editions.append(Edition(axes=axes, size=size, entries=entries))
         except ValueError as err:
             raise DatasetError(f"{path}: edition {axes}: {err}") from err
@@ -222,7 +222,7 @@ def _parse_axes(ed: dict, path: Path, axis_names: list[str], i: int) -> dict[str
 
 
 def _parse_entries(
-    ed: dict, path: Path, size: int, songs: dict[str, Song], axes: dict[str, int]
+    ed: dict, path: Path, songs: dict[str, Song], axes: dict[str, int]
 ) -> list[Entry]:
     raw_entries = ed.get("entries")
     if not isinstance(raw_entries, list):
