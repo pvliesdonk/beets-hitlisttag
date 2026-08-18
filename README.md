@@ -230,8 +230,8 @@ Tracks with no unambiguous match get no generated data — they are
 reported, never guessed at. The end-of-run report counts generated
 tracks and lists unmatched tracks, ambiguous tracks (where distinct
 dataset songs collapse onto the same normalized artist/title), tracks
-whose metadata normalizes to nothing, unreadable files, and files that
-could not be written. A track only counts as generated once its file
+whose metadata normalizes to nothing, unreadable files, files that
+could not be written, and existing `CHARTS` tags that failed to parse. A track only counts as generated once its file
 write succeeded; on a write failure neither the file nor the database is
 touched.
 
