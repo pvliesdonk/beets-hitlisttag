@@ -10,6 +10,8 @@ from beets.importer import ImportSession, ImportTask
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
 from beets.ui import CommonOptionsParser, Subcommand
+from beets.util import syspath
+from mediafile import MediaFile, UnreadableFileError
 
 from .charts import (
     Chart,
@@ -18,6 +20,9 @@ from .charts import (
     _collapse_range,
     charts_field,
 )
+from .dataset import DatasetError, read_dataset
+from .generate import RunReport, build_chart, merge_charts
+from .lookup import SongLookupIndex
 
 log = beets_logging.getLogger("beets.hitlisttag")
 
@@ -148,8 +153,8 @@ class HitlistTag(BeetsPlugin):
         defaults. A malformed or empty value degrades to an empty dict so
         no per-chart fields are generated and commands report an empty
         hitlist set rather than crash. Individual entries whose axes are
-        not a list of strings are dropped with a warning; the rest are
-        kept.
+        not a non-empty list of strings are dropped with a warning; the rest
+        are kept.
         """
         try:
             raw = self.config["hitlists"].get(dict)
@@ -167,7 +172,11 @@ class HitlistTag(BeetsPlugin):
 
         resolved: dict[str, list[str]] = {}
         for name, axes in raw.items():
-            if not isinstance(axes, list) or not all(isinstance(a, str) for a in axes):
+            if (
+                not isinstance(axes, list)
+                or not axes
+                or not all(isinstance(a, str) for a in axes)
+            ):
                 self._log.warning(
                     "hitlist '{}' has invalid axes {!r}; skipping", name, axes
                 )
@@ -216,7 +225,12 @@ class HitlistTag(BeetsPlugin):
         cmd3.parser.add_format_option(target=library.Item)
         cmd3.func = self.show_hitlist
 
-        return [cmd1, cmd2, cmd3]
+        cmd4 = Subcommand(
+            "chartsgen", help="Generate CHARTS tags from the chart dataset"
+        )
+        cmd4.func = self.generate
+
+        return [cmd1, cmd2, cmd3, cmd4]
 
     def show_charts(
         self, lib: Library, opts: CommonOptionsParser, args: list[str]
@@ -367,3 +381,97 @@ class HitlistTag(BeetsPlugin):
             ui.print_(f"Missing the following positions: {_collapse_range(missing)}")
 
         pass
+
+    def generate(
+        self, lib: Library, opts: CommonOptionsParser, args: list[str]
+    ) -> None:
+        """Generate CHARTS tags from the chart dataset (chartsgen command)."""
+        dataset_dir = self.dataset_dir
+        if dataset_dir is None:
+            raise ui.UserError(
+                "hitlisttag: chartsgen requires the dataset_dir option; "
+                "set hitlisttag.dataset_dir in your beets config"
+            )
+        hitlists = self.hitlists
+        try:
+            datasets = read_dataset(dataset_dir, hitlists, self._log)
+        except DatasetError as err:
+            raise ui.UserError(f"hitlisttag: {err}") from err
+        if not datasets:
+            raise ui.UserError(
+                f"hitlisttag: no chart data found under {dataset_dir}; "
+                "check dataset_dir and the dataset files' chart names"
+            )
+        index = SongLookupIndex.from_datasets(datasets, self._log)
+
+        report = RunReport()
+        fmt = self.config["format"].get(str)
+        for item in lib.items(ui.decargs(args)):
+            self._generate_item(item, index, report, fmt, hitlists)
+        for line in report.lines():
+            ui.print_(line)
+
+    def _generate_item(
+        self,
+        item: Item,
+        index: SongLookupIndex,
+        report: RunReport,
+        fmt: str,
+        hitlists: dict[str, list[str]],
+    ) -> None:
+        """Generate and write one item's CHARTS tag; record the outcome.
+
+        The existing tag is read from the *file*, not the database: the
+        database may lag the file (post-import writes, rebuilt databases,
+        unparseable tags degraded to None), and merging against the
+        database's copy destroys file-only charts.
+
+        The file write gates the database store: a track whose write fails
+        is left untouched in both stores and reported, so the two can never
+        disagree about generated data.
+        """
+        report.total += 1
+        display = format(item, fmt)
+
+        try:
+            mediafile = MediaFile(syspath(item.path))
+        except UnreadableFileError as err:
+            self._log.warning("cannot read {0}: {1}", display, err)
+            report.unreadable.append(display)
+            return
+
+        existing = ChartList()
+        raw = mediafile.charts
+        if raw:
+            try:
+                existing = ChartList.from_json_string(raw)
+            except ChartsParseException as err:
+                # Decision: an unparseable tag is treated as absent and, if
+                # generation writes, overwritten wholesale. Always reported.
+                self._log.warning(
+                    "cannot parse existing CHARTS tag for {0}: {1}", display, err
+                )
+                report.unparseable_tags.append(display)
+
+        result = index.lookup(item.artist, item.title)
+        if result.unnormalizable:
+            report.unnormalizable.append(display)
+            return
+        if result.ambiguous_charts:
+            report.ambiguous.append((display, sorted(result.ambiguous_charts)))
+        if result.is_miss:
+            report.unmatched.append(display)
+            return
+        if not result.placements:
+            return  # ambiguous in every matched chart; already reported
+
+        generated = [
+            build_chart(chart, hitlists[chart], placements)
+            for chart, placements in sorted(result.placements.items())
+        ]
+        item.charts = merge_charts(existing, generated)
+        if not item.try_write():
+            report.unwritable.append(display)
+            return
+        self.update_item(item)
+        report.generated += 1

@@ -8,8 +8,12 @@ unexpected types, as the write path's encoding contract requires.
 
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from beetsplug.hitlisttag import CHARTLISTTYPE
-from beetsplug.hitlisttag.charts import Chart, ChartList
+from beetsplug.hitlisttag.charts import Chart, ChartList, ChartsParseException
 
 
 def _make_chart(name: str = "top2000") -> Chart:
@@ -64,3 +68,44 @@ class TestToSql:
 
     def test_none_returns_none(self):
         assert CHARTLISTTYPE.to_sql(None) is None
+
+
+class TestDuplicateChartNames:
+    def test_duplicate_chart_names_rejected_in_json(self):
+        chart = {
+            "name": "top2000",
+            "score": 4,
+            "highest": 1,
+            "chart_type": ["year"],
+            "positions": {"2022": 1},
+        }
+        raw = json.dumps([chart, chart])
+        with pytest.raises(ChartsParseException, match="duplicate chart name"):
+            ChartList.from_json_string(raw)
+
+    def test_duplicate_chart_names_rejected_in_chart_list(self):
+        charts = ChartList.from_json_string(
+            json.dumps(
+                [
+                    {
+                        "name": "top2000",
+                        "score": 4,
+                        "highest": 1,
+                        "chart_type": ["year"],
+                        "positions": {"2022": 1},
+                    }
+                ]
+            )
+        )
+        with pytest.raises(ChartsParseException, match="duplicate chart name"):
+            ChartList.from_json_string([charts[0], charts[0]])
+
+    def test_duplicate_named_tag_normalizes_to_null(self):
+        chart = {
+            "name": "top2000",
+            "score": 4,
+            "highest": 1,
+            "chart_type": ["year"],
+            "positions": {"2022": 1},
+        }
+        assert CHARTLISTTYPE.normalize(json.dumps([chart, chart])) is None

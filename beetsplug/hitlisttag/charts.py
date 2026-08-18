@@ -220,7 +220,16 @@ class ChartList(list[Chart]):
 
     @staticmethod
     def from_json_string(s: "str | ChartList | list[Chart]") -> "ChartList":
+        """Parse a ChartList from JSON string, Chart list, or existing ChartList.
+
+        A ChartList never holds two charts with the same name; if two charts
+        share a name in the input, raises ChartsParseException. This means a
+        CHARTS tag with duplicate names is malformed and will be treated as
+        absent (ChartListType.normalize degrades parse failures to null).
+        """
         chartlist = ChartList()
+        seen: set[str] = set()
+
         if isinstance(s, ChartList):
             return s
         elif isinstance(s, str):
@@ -235,9 +244,19 @@ class ChartList(list[Chart]):
                     f"Expected a JSON array of charts, got {type(d).__name__}"
                 )
             for chart in d:
-                chartlist.append(Chart.from_dict(chart))
+                parsed_chart = Chart.from_dict(chart)
+                if parsed_chart.name in seen:
+                    raise ChartsParseException(
+                        f"duplicate chart name '{parsed_chart.name}'"
+                    )
+                seen.add(parsed_chart.name)
+                chartlist.append(parsed_chart)
         elif isinstance(s, list) and all(isinstance(x, Chart) for x in s):
-            chartlist.extend(s)
+            for chart in s:
+                if chart.name in seen:
+                    raise ChartsParseException(f"duplicate chart name '{chart.name}'")
+                seen.add(chart.name)
+                chartlist.append(chart)
         else:
             raise ChartsParseException("Received invalid type to deserialize")
         return chartlist
