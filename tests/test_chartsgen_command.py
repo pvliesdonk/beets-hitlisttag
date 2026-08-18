@@ -392,3 +392,69 @@ class TestFileErrors:
         fresh = next(iter(helper.lib.items()))
         assert "top2000" not in fresh._values_flex
         assert "charts" not in fresh._values_flex
+
+
+# ── round trip: the milestone's indistinguishability criterion ──────────────
+
+
+class TestRoundTrip:
+    def test_generated_tag_indistinguishable_from_external(self, env, capsys):
+        """The consuming commands treat a generated tag exactly as an
+        externally produced one.
+
+        The external item receives the very bytes chartsgen wrote for the
+        generated item — seeded through the file with matching audio
+        metadata and pulled in via ``Item.read()``, the way an import
+        would. ``chartsupdate`` must then materialize identical fields,
+        and ``charts``/``hitlist`` must show both items alike.
+        """
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        gen = _add_file_item(
+            helper, artist="Artist A", title="Song A", album="GenAlbum"
+        )
+        ext = _add_file_item(
+            helper, artist="Artist A", title="Song A", album="ExtAlbum"
+        )
+
+        plugin.generate(helper.lib, _opts(), ["album:GenAlbum"])
+
+        raw = MediaFile(syspath(gen.path)).charts
+        assert raw
+        mf = MediaFile(syspath(ext.path))
+        mf.artist = "Artist A"
+        mf.title = "Song A"
+        mf.album = "ExtAlbum"
+        mf.charts = raw
+        mf.save()
+        ext.read()
+        ext.store()
+
+        plugin.update(helper.lib, _opts(), [])
+
+        fresh_gen = helper.lib.get_item(gen.id)
+        fresh_ext = helper.lib.get_item(ext.id)
+        assert (
+            fresh_gen["charts"].to_json_string() == fresh_ext["charts"].to_json_string()
+        )
+        for field in (
+            "top2000",
+            "top2000_score",
+            "top2000_highest",
+            "top2000_when",
+        ):
+            assert fresh_gen[field] == fresh_ext[field]
+
+        capsys.readouterr()
+        plugin.show_charts(helper.lib, _opts(full=False), [])
+        out = capsys.readouterr().out
+        assert out.count("top2000:") == 2
+
+        plugin.show_hitlist(
+            helper.lib,
+            _opts(format=None, show_missing=False),
+            ["top2000", "2022"],
+        )
+        out = capsys.readouterr().out
+        assert "GenAlbum" in out
+        assert "ExtAlbum" in out
