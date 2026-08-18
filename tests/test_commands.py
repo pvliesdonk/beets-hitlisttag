@@ -400,6 +400,11 @@ class TestConfigDrivenHitlists:
 
         assert "top2000" not in item._values_flex
 
+    def test_empty_axes_hitlist_skipped(self, env):
+        helper, plugin = env
+        config["hitlisttag"]["hitlists"] = {"good": ["year"], "bad": []}
+        assert plugin.hitlists == {"good": ["year"]}
+
     def test_empty_hitlists_command_no_crash(self, env):
         helper, plugin = env
         config["hitlisttag"]["hitlists"] = {}

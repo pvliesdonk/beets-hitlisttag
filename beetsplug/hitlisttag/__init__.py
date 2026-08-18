@@ -148,8 +148,8 @@ class HitlistTag(BeetsPlugin):
         defaults. A malformed or empty value degrades to an empty dict so
         no per-chart fields are generated and commands report an empty
         hitlist set rather than crash. Individual entries whose axes are
-        not a list of strings are dropped with a warning; the rest are
-        kept.
+        not a non-empty list of strings are dropped with a warning; the rest
+        are kept.
         """
         try:
             raw = self.config["hitlists"].get(dict)
@@ -167,7 +167,11 @@ class HitlistTag(BeetsPlugin):
 
         resolved: dict[str, list[str]] = {}
         for name, axes in raw.items():
-            if not isinstance(axes, list) or not all(isinstance(a, str) for a in axes):
+            if (
+                not isinstance(axes, list)
+                or not axes
+                or not all(isinstance(a, str) for a in axes)
+            ):
                 self._log.warning(
                     "hitlist '{}' has invalid axes {!r}; skipping", name, axes
                 )
