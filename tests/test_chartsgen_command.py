@@ -343,6 +343,22 @@ class TestGeneration:
         assert [c["name"] for c in charts] == ["top2000"]
         assert "Existing CHARTS tags that did not parse:" in capsys.readouterr().out
 
+    def test_query_restricts_generation_to_matched_items(self, env, capsys):
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        matched = _add_file_item(
+            helper, artist="Artist A", title="Song A", album="AlbumOne"
+        )
+        other = _add_file_item(
+            helper, artist="Artist A", title="Song A", album="AlbumTwo"
+        )
+
+        plugin.generate(helper.lib, _opts(), ["album:AlbumOne"])
+
+        assert _file_charts(matched) != []
+        assert _file_charts(other) == []
+        assert "Generated charts for 1 of 1 tracks." in capsys.readouterr().out
+
 
 class TestFileErrors:
     def test_unreadable_file_skipped_run_continues(self, env, capsys):

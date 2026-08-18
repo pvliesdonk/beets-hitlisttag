@@ -445,9 +445,12 @@ class HitlistTag(BeetsPlugin):
         if raw:
             try:
                 existing = ChartList.from_json_string(raw)
-            except ChartsParseException:
+            except ChartsParseException as err:
                 # Decision: an unparseable tag is treated as absent and, if
                 # generation writes, overwritten wholesale. Always reported.
+                self._log.warning(
+                    "cannot parse existing CHARTS tag for {0}: {1}", display, err
+                )
                 report.unparseable_tags.append(display)
 
         result = index.lookup(item.artist, item.title)
