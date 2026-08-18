@@ -11,6 +11,8 @@ import pytest
 
 from beetsplug.hitlisttag.dataset import (
     DatasetError,
+    Edition,
+    Entry,
     HitlistData,
     Song,
     read_dataset,
@@ -276,6 +278,96 @@ def test_symlinked_subdirectory_is_not_followed(tmp_path):
     result = read_dataset(root, HITLISTS, log)
     # top2000 sits behind the symlink and must not be followed.
     assert [d.chart for d in result] == ["top40"]
+
+
+def test_same_song_at_two_positions_rejected(tmp_path):
+    obj = {
+        "chart": "top2000",
+        "songs": {
+            "1": {"artist": "Artist A", "title": "Song A"},
+            "2": {"artist": "Artist B", "title": "Song B"},
+        },
+        "editions": [
+            {
+                "axes": {"year": 2023},
+                "size": 5,
+                "entries": [
+                    {"position": 1, "songs": ["1"]},
+                    {"position": 2, "songs": ["1"]},
+                ],
+            }
+        ],
+    }
+    with pytest.raises(DatasetError, match="song '1' more than once"):
+        _write(tmp_path, obj, "top2000.json")
+
+
+def test_same_song_twice_in_one_entry_rejected(tmp_path):
+    obj = {
+        "chart": "top2000",
+        "songs": {
+            "1": {"artist": "Artist A", "title": "Song A"},
+            "2": {"artist": "Artist B", "title": "Song B"},
+        },
+        "editions": [
+            {
+                "axes": {"year": 2023},
+                "size": 5,
+                "entries": [{"position": 1, "songs": ["1", "1"]}],
+            }
+        ],
+    }
+    with pytest.raises(DatasetError, match="song '1' more than once"):
+        _write(tmp_path, obj, "top2000.json")
+
+
+def test_same_song_across_editions_allowed(tmp_path):
+    obj = {
+        "chart": "top2000",
+        "songs": {
+            "1": {"artist": "Artist A", "title": "Song A"},
+            "2": {"artist": "Artist B", "title": "Song B"},
+        },
+        "editions": [
+            {
+                "axes": {"year": 2023},
+                "size": 5,
+                "entries": [{"position": 1, "songs": ["1"]}],
+            },
+            {
+                "axes": {"year": 2024},
+                "size": 5,
+                "entries": [{"position": 3, "songs": ["1"]}],
+            },
+        ],
+    }
+    result = _write(tmp_path, obj, "top2000.json")
+    assert len(result[0].editions) == 2
+
+
+def test_edition_rejects_duplicate_song_directly():
+    song = Song(id="1", artist="A", title="B")
+    with pytest.raises(ValueError, match="song '1' more than once"):
+        Edition(
+            axes={"year": 2023},
+            size=5,
+            entries=[
+                Entry(position=1, songs=[song]),
+                Entry(position=2, songs=[song]),
+            ],
+        )
+
+
+def test_edition_rejects_duplicate_position_directly():
+    with pytest.raises(ValueError, match="duplicate position 1"):
+        Edition(
+            axes={"year": 2023},
+            size=5,
+            entries=[
+                Entry(position=1, songs=[Song(id="1", artist="A", title="B")]),
+                Entry(position=1, songs=[Song(id="2", artist="C", title="D")]),
+            ],
+        )
 
 
 def test_dataset_dir_property_resolves_and_defaults_to_none():

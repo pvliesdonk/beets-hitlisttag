@@ -13,7 +13,8 @@ JSON file per hitlist. Each file declares:
   entry is one release at a rank: ``position`` (an integer in ``1..size``) and
   ``songs`` (a non-empty list of song ids). A release crediting more than one
   song -- a double A-side or an early multi-song single -- lists them all;
-  positions stay unique within an edition.
+  positions stay unique within an edition, and so do songs -- a song id may
+  appear at most once per edition.
 
 Files hold raw acquired data only: disposable and re-acquirable. Discovery is
 recursive; only lowercase ``*.json`` files are read; unreadable directories are
@@ -47,12 +48,36 @@ class Entry:
     position: int
     songs: list[Song]
 
+    def __post_init__(self) -> None:
+        if not self.songs:
+            raise ValueError(
+                f"entry at position {self.position} must have a non-empty 'songs' list"
+            )
+
 
 @dataclass
 class Edition:
     axes: dict[str, int]
     size: int
     entries: list[Entry]
+
+    def __post_init__(self) -> None:
+        if self.size < 1:
+            raise ValueError("'size' must be an integer >= 1")
+        seen_positions: set[int] = set()
+        seen_songs: set[str] = set()
+        for entry in self.entries:
+            if not 1 <= entry.position <= self.size:
+                raise ValueError(
+                    f"entry position {entry.position} not in 1..{self.size}"
+                )
+            if entry.position in seen_positions:
+                raise ValueError(f"duplicate position {entry.position}")
+            seen_positions.add(entry.position)
+            for song in entry.songs:
+                if song.id in seen_songs:
+                    raise ValueError(f"references song {song.id!r} more than once")
+                seen_songs.add(song.id)
 
 
 @dataclass
@@ -168,8 +193,11 @@ def _parse_editions(
         size = ed.get("size")
         if not _is_int(size) or size < 1:
             raise DatasetError(f"{path}: edition {axes} 'size' must be an integer >= 1")
-        entries = _parse_entries(ed, path, size, songs, axes)
-        editions.append(Edition(axes=axes, size=size, entries=entries))
+        try:
+            entries = _parse_entries(ed, path, size, songs, axes)
+            editions.append(Edition(axes=axes, size=size, entries=entries))
+        except ValueError as err:
+            raise DatasetError(f"{path}: edition {axes}: {err}") from err
     return editions
 
 
@@ -200,21 +228,16 @@ def _parse_entries(
     if not isinstance(raw_entries, list):
         raise DatasetError(f"{path}: edition {axes} 'entries' must be a list")
     entries: list[Entry] = []
-    seen_positions: set[int] = set()
     for entry in raw_entries:
         if not isinstance(entry, dict):
             raise DatasetError(f"{path}: edition {axes} has a non-object entry")
         pos = entry.get("position")
-        if not _is_int(pos) or pos < 1 or pos > size:
+        if not _is_int(pos):
             raise DatasetError(
-                f"{path}: edition {axes} entry 'position' must be an integer "
-                f"in 1..{size}"
+                f"{path}: edition {axes} entry 'position' must be an integer"
             )
-        if pos in seen_positions:
-            raise DatasetError(f"{path}: edition {axes} has a duplicate position {pos}")
-        seen_positions.add(pos)
         song_ids = entry.get("songs")
-        if not isinstance(song_ids, list) or not song_ids:
+        if not isinstance(song_ids, list):
             raise DatasetError(
                 f"{path}: edition {axes} entry at position {pos} must have a "
                 f"non-empty 'songs' list"
