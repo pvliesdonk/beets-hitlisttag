@@ -153,7 +153,9 @@ computed from it (see below).
 For generated tags, `score` is a positional-points sum: a placement at
 position *p* in an edition of declared size *N* contributes *N* + 1 −
 *p*, summed over every edition the song appears in. This is the Top 40's
-official scoring method and is used as the default for every chart.
+official scoring method; whether any other chart defines an official
+method of its own is not assumed either way, so the plugin applies this
+formula as the default for every chart.
 `highest` is the best (lowest-numbered) position across editions. In the
 example above, Bohemian Rhapsody scores (2000 + 1 − 1) + (2000 + 1 − 2)
 = 3999 with `highest` 1.
