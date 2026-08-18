@@ -239,8 +239,7 @@ def _parse_entries(
         song_ids = entry.get("songs")
         if not isinstance(song_ids, list):
             raise DatasetError(
-                f"{path}: edition {axes} entry at position {pos} must have a "
-                f"non-empty 'songs' list"
+                f"{path}: edition {axes} entry at position {pos} 'songs' must be a list"
             )
         resolved: list[Song] = []
         for sid in song_ids:
