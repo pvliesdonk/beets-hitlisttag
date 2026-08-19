@@ -14,7 +14,10 @@ It provides:
 - a `charts` command showing a song's chart history (summary or full
   positions);
 - a `hitlist` command that reconstructs a full chart for a given year (or
-  year/week) from the library, including a report of missing positions.
+  year/week) from the library, including a report of missing positions;
+- a `chartsgen` command that generates `CHARTS` tags from a local chart
+  dataset you author or acquire yourself (see
+  [The chart dataset](#the-chart-dataset)).
 
 ## Installation
 
@@ -39,11 +42,13 @@ plugins:
 
 ## The `CHARTS` tag
 
-The plugin reads chart history from a custom `CHARTS` file tag. The tag
-is not part of any standard tagging scheme — it is expected to be written
-by an external tagging tool; this plugin reads it, exposes it as the
-`charts` field, and materializes it into queryable fields. It is stored
-as:
+The plugin stores chart history in a custom `CHARTS` file tag. The tag
+is not part of any standard tagging scheme. This plugin both reads and
+generates it: tags written by an external tagging tool are read, exposed
+as the `charts` field, and materialized into queryable fields, and the
+`chartsgen` command writes the same tag from a local chart dataset —
+generated and externally written tags are indistinguishable to the rest
+of the plugin. It is stored as:
 
 - a `TXXX` frame with description `CHARTS` in MP3 (ID3) files;
 - a freeform atom `----:nl.liesdonk.tagger:CHARTS` in MP4/M4A files;
@@ -87,6 +92,73 @@ This says the song stood at position 480, 231, and 305 in the Top 2000
 of 2021–2023, and spent three weeks in the Top 40 in 1997 (weeks 20–22,
 peaking at 3). A chart object missing any of the five keys, or with a
 value of the wrong type, is rejected when the tag is parsed.
+
+## The chart dataset
+
+`chartsgen` generates `CHARTS` tags from a local dataset of chart
+history. The plugin ships no chart data — complete chart listings
+generally cannot be redistributed — so you author the dataset by hand or
+acquire it yourself, and point the plugin at it with the `dataset_dir`
+configuration key (see [Configuration](#configuration)).
+
+The dataset is one JSON file per hitlist, discovered recursively under
+`dataset_dir` (only lowercase `*.json` files are read; symlinked
+directories are not followed). Each file declares:
+
+- `chart` — the hitlist name, matching a configured hitlist. Files for
+  unconfigured charts are skipped with a warning; two files declaring the
+  same chart are an error.
+- `songs` — an object mapping a file-local song id to `{artist, title}`.
+  A song that appears in several editions is stored once and referenced
+  by id.
+- `editions` — a list of editions. Each declares `axes` (an object keyed
+  by the chart's configured axis names, positive-integer values), `size`
+  (the number of ranks), and `entries`. An entry is one release at a
+  rank: a `position` in `1..size` and a non-empty list of song ids — a
+  release crediting more than one song (a double A-side) lists them all
+  at its single rank. Positions and songs are each unique within an
+  edition.
+
+```json
+{
+  "chart": "top2000",
+  "songs": {
+    "1": {"artist": "Queen", "title": "Bohemian Rhapsody"},
+    "2": {"artist": "Danny Vera", "title": "Roller Coaster"}
+  },
+  "editions": [
+    {
+      "axes": {"year": 2022},
+      "size": 2000,
+      "entries": [
+        {"position": 1, "songs": ["1"]},
+        {"position": 2, "songs": ["2"]}
+      ]
+    },
+    {
+      "axes": {"year": 2023},
+      "size": 2000,
+      "entries": [
+        {"position": 2, "songs": ["1"]}
+      ]
+    }
+  ]
+}
+```
+
+Editions may be partial — hand-authoring just the songs you care about
+is fine — but `size` must be the edition's real size, because scores are
+computed from it (see below).
+
+For generated tags, `score` is a positional-points sum: a placement at
+position *p* in an edition of declared size *N* contributes *N* + 1 −
+*p*, summed over every edition the song appears in. This is the Top 40's
+official scoring method; whether any other chart defines an official
+method of its own is not assumed either way, so the plugin applies this
+formula as the default for every chart.
+`highest` is the best (lowest-numbered) position across editions. In the
+example above, Bohemian Rhapsody scores (2000 + 1 − 1) + (2000 + 1 − 2)
+= 3999 with `highest` 1.
 
 ## Usage
 
@@ -136,6 +208,44 @@ beet hitlist top2000 2023
 beet hitlist -M top40 2024 5
 ```
 
+### `chartsgen`
+
+Generates `CHARTS` tags for matching items from the chart dataset (see
+[The chart dataset](#the-chart-dataset); requires `dataset_dir` to be
+configured).
+
+```
+beet chartsgen [QUERY]
+```
+
+Without a query it processes every item in the library. Each track's
+artist and title are matched against the dataset's songs — exact
+matching, insensitive to case, diacritics, punctuation, and whitespace —
+and for every chart with a match, the chart's object in the track's
+`CHARTS` tag is replaced wholesale from the dataset. Everything else in
+the tag is left untouched: charts the dataset does not know, and charts
+where this particular song has no match, survive unchanged, so
+generation never destroys externally written data. An existing tag that
+does not parse is treated as absent: if the track gets any generated
+data, the whole tag is replaced by it; if the track matches nothing, the
+unparseable tag is left on disk untouched. Either way the parse failure
+is reported.
+
+Tracks with no unambiguous match get no generated data — they are
+reported, never guessed at. The end-of-run report counts generated
+tracks and lists unmatched tracks, ambiguous tracks (where distinct
+dataset songs collapse onto the same normalized artist/title), tracks
+whose metadata normalizes to nothing, unreadable files, files that
+could not be written, and existing `CHARTS` tags that failed to parse.
+A track only counts as generated once its file write succeeded; on a
+write failure neither the file nor the database is touched.
+
+Writing goes through beets' normal tag-writing machinery, so — like
+`beet write` — it writes the item's media fields from the library's
+values, and it materializes the same per-chart flexible fields as
+`chartsupdate`, making generated tags indistinguishable downstream from
+externally produced ones.
+
 ## Configuration
 
 Which hitlists exist and what axes each one uses are defined by the
@@ -155,7 +265,18 @@ hitlisttag:
 
 Omitting the key falls back to the defaults above. A hitlist takes one
 argument per axis, in order; a single-axis hitlist like `top2000` takes a
-year, while the two-axis `top40` takes a year and a week.
+year, while the two-axis `top40` takes a year and a week. An entry whose
+axes are not a non-empty list of strings is dropped with a warning.
+
+The chart dataset used by `chartsgen` is located by the `dataset_dir`
+key (unset by default; `chartsgen` errors until it is configured). A
+relative path is resolved against the beets configuration directory, and
+`~` is expanded:
+
+```yaml
+hitlisttag:
+  dataset_dir: ~/charts
+```
 
 A chart present in a file's `CHARTS` tag but absent from the configured
 hitlists is still stored in the `charts` blob, but its per-chart

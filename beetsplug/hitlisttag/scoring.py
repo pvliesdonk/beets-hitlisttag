@@ -2,9 +2,11 @@
 
 `compute(chart, placements)` returns the `score` and `highest` the tag schema
 stores. Scoring is resolved per chart: `_SCORERS` maps a chart to its scorer,
-and every chart absent from it uses `_default_score` -- the Top 40's official
-positional-points sum. Adding a chart-specific scorer is a one-line
-registration, with no change to the dataset format or the tag schema.
+and every chart absent from it uses `_default_score` -- the positional-points
+sum, which is the Top 40's official method and this plugin's default for
+charts whose own method is unknown or undefined. Adding a chart-specific
+scorer is a one-line registration, with no change to the dataset format or
+the tag schema.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ class ChartScore:
 
 
 def _default_score(placements: list[Placement]) -> ChartScore:
-    """Top 40 official scoring.
+    """Default scoring for any chart without a scorer of its own.
 
     highest is the best (lowest) position reached; score sums
     (size + 1 - position) over every appearance, using the declared edition
