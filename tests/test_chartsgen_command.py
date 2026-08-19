@@ -343,6 +343,27 @@ class TestGeneration:
         assert [c["name"] for c in charts] == ["top2000"]
         assert "Existing CHARTS tags that did not parse:" in capsys.readouterr().out
 
+    def test_unparseable_tag_on_unmatched_track_left_on_disk(self, env, capsys):
+        """A miss never writes, so the corrupt tag survives — but is reported.
+
+        The overwrite of an unparseable tag is a consequence of generating
+        data for the track, not an end in itself: a track that matches
+        nothing keeps whatever its file held.
+        """
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Nobody", title="Nothing")
+        mf = MediaFile(syspath(item.path))
+        mf.charts = "this is not json"
+        mf.save()
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert MediaFile(syspath(item.path)).charts == "this is not json"
+        out = capsys.readouterr().out
+        assert "Existing CHARTS tags that did not parse:" in out
+        assert "Unmatched tracks:" in out
+
     def test_query_restricts_generation_to_matched_items(self, env, capsys):
         helper, plugin, dataset_dir = env
         _write_dataset(dataset_dir, "top2000", _TOP2000)

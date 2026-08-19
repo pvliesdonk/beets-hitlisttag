@@ -226,16 +226,19 @@ and for every chart with a match, the chart's object in the track's
 the tag is left untouched: charts the dataset does not know, and charts
 where this particular song has no match, survive unchanged, so
 generation never destroys externally written data. An existing tag that
-does not parse is treated as absent and overwritten (and reported).
+does not parse is treated as absent: if the track gets any generated
+data, the whole tag is replaced by it; if the track matches nothing, the
+unparseable tag is left on disk untouched. Either way the parse failure
+is reported.
 
 Tracks with no unambiguous match get no generated data — they are
 reported, never guessed at. The end-of-run report counts generated
 tracks and lists unmatched tracks, ambiguous tracks (where distinct
 dataset songs collapse onto the same normalized artist/title), tracks
 whose metadata normalizes to nothing, unreadable files, files that
-could not be written, and existing `CHARTS` tags that failed to parse. A track only counts as generated once its file
-write succeeded; on a write failure neither the file nor the database is
-touched.
+could not be written, and existing `CHARTS` tags that failed to parse.
+A track only counts as generated once its file write succeeded; on a
+write failure neither the file nor the database is touched.
 
 Writing goes through beets' normal tag-writing machinery, so — like
 `beet write` — it writes the item's media fields from the library's
