@@ -119,8 +119,9 @@ from that dataset. `stated`.
 
 ## Milestones and order
 
-Milestones 1–5 (the first roadmap) are delivered; see History. Current
-milestones (each holds its acceptance criterion in its GitHub description):
+Milestones 1–5 (the first roadmap) and milestone 6 are delivered; see
+History. Milestones (each holds its acceptance criterion in its GitHub
+description):
 
 6. [Chart dataset and tag generation](https://github.com/pvliesdonk/beets-hitlisttag/milestone/6)
 7. [Acquisition framework](https://github.com/pvliesdonk/beets-hitlisttag/milestone/7)
@@ -137,6 +138,10 @@ throughout.
    (whether per-track lookup against a local dataset is viable and pleasant
    inside beets), and it fixes the dataset contract that every later
    milestone consumes. It is also immediately useful even hand-fed.
+   *Delivered 2026-08-19; the bet paid: per-track lookup against a local
+   dataset is viable, and the dataset contract every later milestone
+   consumes now exists in code (`evidenced`:
+   `beetsplug/hitlisttag/dataset.py`).*
 7. **Acquisition framework** second: real scraped data at scale is exactly
    the evidence the ontology design needs — how messy entries actually are,
    how often spellings diverge, how common multi-song entries are. Designing
@@ -154,9 +159,11 @@ throughout.
     cadence are operational concerns best not debugged at the same time as
     core design.
 
-The order is a lean, not a wall: e.g. seeding the song catalog from an
-already-tagged library (milestone 8) may be pulled earlier if milestone 6
-wants realistic data before acquisition lands.
+The order is a lean, not a wall. The standing example — pulling milestone
+8's catalog seeding earlier so milestone 6 had realistic data — lapsed
+unused: milestone 6 shipped on hand-authored fixtures, which was enough
+to prove the pipeline. The lean itself stands for the milestones that
+remain. `derived`.
 
 ## Known unknowns
 
@@ -178,7 +185,14 @@ wants realistic data before acquisition lands.
   change the next steps (the parser must be defensive either way), so this is
   recorded, not ticketed. `derived`. *Superseded in part (2026-08-04):* the
   second roadmap makes this plugin a producer itself; externally written tags
-  may still occur, so the defensive-parser stance stands.
+  may still occur, so the defensive-parser stance stands. *Realized
+  (2026-08-19):* `chartsgen` writes the tag, and the two producers are
+  indistinguishable to the rest of the plugin — pinned by test, not
+  asserted (`evidenced`:
+  `tests/test_chartsgen_command.py::TestRoundTrip`). The defensive
+  parser earns its keep on the generation path too: an unparseable
+  existing tag is treated as absent and reported, and is replaced only if
+  the track gets generated data.
 - **On-disk dataset form.** *Resolved (2026-08-04, refined 2026-08-06 during
   #75).* The dataset is one human-authorable JSON file **per hitlist**, in a
   dataset directory set by plugin config. Each file holds a `songs` table (a
@@ -196,7 +210,12 @@ wants realistic data before acquisition lands.
   known-unknown: whether a wholesale re-acquisition must preserve minted ids
   so milestone 7's ontology can link to them durably. `stated` (per-hitlist
   songs-table with hitlist-scoped minted ids, 2026-08-06); `derived` (the
-  normalized shape).
+  normalized shape). *Locators repointed (2026-08-19):* the form is no
+  longer a plan but committed code and documentation — `evidenced`:
+  `beetsplug/hitlisttag/dataset.py` (module docstring and the `Edition`
+  and `Entry` dataclasses, which now own the per-edition invariants) and
+  README, *The chart dataset*. The minted-id question is untouched by
+  milestone 6 and still points at milestone 7.
 - **Score beyond the Top 40.** *Resolved structurally (2026-08-04,
   milestone 6 refinement).* The positional-points sum over declared edition
   sizes — official for the Top 40 (`stated`) — ships as the default for
@@ -204,6 +223,13 @@ wants realistic data before acquisition lands.
   alternative definition can land without changing the dataset format or
   tag schema. Whether any other chart defines an official score remains
   unknown but no longer gates anything; recorded, not ticketed. `derived`.
+  *Framing corrected (2026-08-19, `stated`):* what is known is that the
+  Top 40 uses this method officially; what other hitlists do is not known
+  either way, and there are many of them. The formula is therefore this
+  plugin's **default** for charts whose own method is unknown or
+  undefined — not a claim that every chart shares it. Code and docs say
+  so (`evidenced`: `beetsplug/hitlisttag/scoring.py`, README, *The chart
+  dataset*).
 - **Source viability.** Which public sources exist per chart, their terms,
   and whether anti-bot measures apply. Not knowing changes nothing now — the
   ingestor abstraction is source-agnostic by design. Resolved by: refining
@@ -317,3 +343,35 @@ wants realistic data before acquisition lands.
   a song's run across editions. Song ids are hitlist-scoped and minted per new
   song. New known-unknown recorded: minted-id stability across wholesale
   re-acquisition versus milestone 7's ontology links. No change to ordering.
+- 2026-08-19 — **milestone 6 (chart dataset and tag generation) completed.**
+  All eight issues closed: the dataset reader and fixtures (#75), normalized
+  exact lookup (#76), per-chart score and highest (#77), the `chartsgen`
+  command (#78), the test suite (#79), README documentation (#80), plus the
+  package conversion (#85) and the milestone's refinement issue (#70). The
+  acceptance criterion was checked clause by clause rather than inferred from
+  an empty issue list, and each clause has a test behind it: a single command
+  generates tags from data on disk in the documented form
+  (`tests/test_chartsgen_command.py::TestGeneration`); generated tags are
+  indistinguishable to the rest of the plugin from externally produced ones
+  (`::TestRoundTrip`, which drives `chartsupdate`, `charts`, and `hitlist`
+  over both); tracks with no unambiguous match are reported, not guessed at
+  or silently skipped (the unmatched, ambiguous, and unnormalizable report
+  buckets, each covered).
+- 2026-08-19 — **method finding, worth more than the code it produced.** The
+  first `chartsgen` implementation passed every per-task review and a
+  whole-branch review, then was stopped before push by the local review gate
+  with four confirmed findings sharing one root cause: the specification had
+  designed the happy path and the *reporting* of failures, but never the
+  *state* after a failure, so invariants were held by call-site ordering and
+  parser-local checks rather than by the types. The branch was abandoned and
+  the work re-implemented from a spec addendum stating four invariants: the
+  file write gates the database store (a failed write leaves both stores
+  untouched); `ChartList` rejects duplicate chart names at parse; edition
+  invariants live on the `Edition`/`Entry` dataclasses rather than in the
+  parser; and empty axis lists are rejected by config validation. The rework
+  cleared the gate. Recorded here because the same omission is available to
+  every later milestone — acquisition and curation both write state that a
+  failure can leave half-applied. `derived`.
+- 2026-08-19 — milestone 7 (acquisition framework) is unblocked: its
+  refinement issue (#71) was waiting on the edition format (#75), which
+  shipped. It is next; no change to the ordering argument, which held.
