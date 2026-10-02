@@ -14,17 +14,28 @@ a warning, and is refused by ``fetch()``.
 
 from __future__ import annotations
 
+import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
-from beetsplug.hitlisttag.ingest import IngestError
+import requests
+
+from beetsplug.hitlisttag.ingest import (
+    AcquiredEdition,
+    EditionRef,
+    IngestError,
+    RawEntry,
+    RawSong,
+)
 
 SIZE = 2000
 """Positions per edition; the chart's size by definition."""
 
 _ABSENT = {"", "—", "×"}
 """Position cells meaning "not listed" / "not yet released"."""
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -133,3 +144,72 @@ def parse_table(wikitext: str) -> Table:
             positions[year] = position
         rows.append(Row(artist, title, positions))
     return Table(years, tuple(rows))
+
+
+class Top2000Ingestor:
+    """The ``top2000`` ingestor over Wikipedia's consolidated table.
+
+    One page fetch per instance, on first use; ``fetch_text`` is injectable
+    so tests never touch the network.
+    """
+
+    chart = "top2000"
+    axes = ("year",)
+
+    def __init__(self, fetch_text: Callable[[], str] | None = None) -> None:
+        self._fetch_text = fetch_text or _download_page
+        self._cached: Table | None = None
+        self._complete: tuple[int, ...] | None = None
+
+    def _table(self) -> Table:
+        if self._cached is None:
+            try:
+                text = self._fetch_text()
+            except requests.RequestException as err:
+                raise IngestError(f"cannot fetch the Top 2000 page: {err}") from err
+            self._cached = parse_table(text)
+        return self._cached
+
+    def _complete_years(self) -> tuple[int, ...]:
+        """Years whose positions are exactly 1..SIZE; others warned about once."""
+        if self._complete is None:
+            table = self._table()
+            complete: list[int] = []
+            for year in table.years:
+                found = [
+                    row.positions[year] for row in table.rows if year in row.positions
+                ]
+                if sorted(found) == list(range(1, SIZE + 1)):
+                    complete.append(year)
+                else:
+                    _log.warning(
+                        f"Top 2000 {year} is not a complete edition on the source: "
+                        f"{len(found)} positions, {len(set(found))} distinct"
+                    )
+            self._complete = tuple(complete)
+        return self._complete
+
+    def editions(self) -> Iterable[EditionRef]:
+        return [EditionRef({"year": year}) for year in self._complete_years()]
+
+    def fetch(self, ref: EditionRef) -> AcquiredEdition:
+        year = ref.axes["year"]
+        complete = self._complete_years()
+        if year not in complete:
+            raise IngestError(
+                f"Top 2000 {year} is not a complete edition on the source; "
+                f"available: {', '.join(str(y) for y in complete)}"
+            )
+        entries = sorted(
+            (
+                RawEntry(row.positions[year], (RawSong(row.artist, row.title),))
+                for row in self._table().rows
+                if year in row.positions
+            ),
+            key=lambda entry: entry.position,
+        )
+        return AcquiredEdition(ref, SIZE, tuple(entries))
+
+
+def _download_page() -> str:  # replaced by the real fetcher in the next task
+    raise IngestError("cannot fetch the Top 2000 page: no fetcher configured")

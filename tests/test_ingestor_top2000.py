@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
 
-from beetsplug.hitlisttag.ingest import IngestError
+from beetsplug.hitlisttag.ingest import EditionRef, IngestError
 from beetsplug.hitlisttag.ingestors.top2000 import (
     SIZE,
     Row,
     Table,
+    Top2000Ingestor,
     _clean,
     _decode_year,
     parse_table,
@@ -129,3 +131,109 @@ class TestParseTable:
         text = _fixture().replace("||1975||1||1||1||2", f"||1975||1||1||1||{SIZE + 1}")
         with pytest.raises(IngestError, match=r"Made Up Song.*2001"):
             parse_table(text)
+
+
+def _generated_table(
+    years_rows: dict[int, int], double_a_side_year: int | None = None
+) -> str:
+    """Wikitext with made-up rows: for each year, positions 1..N filled.
+
+    Rows are shared across years: row k holds position k in every year whose
+    count is >= k. ``double_a_side_year`` puts an 'A/B' title at position 2.
+    """
+    years = sorted(years_rows)
+    header = "!Artiest||Titel||Jaar||HP||" + "||".join(f"{y % 100:02d}" for y in years)
+    lines = ['{| class="wikitable sortable"', "|-", header]
+    total = max(years_rows.values())
+    for k in range(1, total + 1):
+        title = f"Song {k}"
+        if double_a_side_year is not None and k == 2:
+            title = "Side A/Side B"
+        cells = [f"[[Artist {k}]]", title, "1970", str(k)]
+        cells += [str(k) if years_rows[y] >= k else "—" for y in years]
+        lines += ["|-", "|" + "||".join(cells)]
+    lines.append("|}")
+    return "\n".join(lines) + "\n"
+
+
+class TestTop2000Ingestor:
+    def test_declares_chart_and_axes(self):
+        ingestor = Top2000Ingestor(fetch_text=lambda: "")
+        assert ingestor.chart == "top2000"
+        assert ingestor.axes == ("year",)
+
+    def test_editions_lists_complete_years_in_order(self, caplog):
+        text = _generated_table({1999: SIZE, 2000: SIZE, 2025: 1500})
+        ingestor = Top2000Ingestor(fetch_text=lambda: text)
+        with caplog.at_level(logging.WARNING):
+            refs = list(ingestor.editions())
+        assert refs == [EditionRef({"year": 1999}), EditionRef({"year": 2000})]
+        assert "2025" in caplog.text and "1500" in caplog.text
+
+    def test_duplicate_position_excludes_year_with_warning(self, caplog):
+        # Review focus 4: an editor's typo must not raise from editions().
+        text = _generated_table({1999: SIZE, 2000: SIZE}).replace(
+            "|[[Artist 7]]||Song 7||1970||7||7||7",
+            "|[[Artist 7]]||Song 7||1970||7||7||6",
+        )
+        ingestor = Top2000Ingestor(fetch_text=lambda: text)
+        with caplog.at_level(logging.WARNING):
+            refs = list(ingestor.editions())
+        assert refs == [EditionRef({"year": 1999})]
+        assert "2000" in caplog.text
+
+    def test_fetch_complete_year(self):
+        text = _generated_table({1999: SIZE, 2025: SIZE}, double_a_side_year=2025)
+        ingestor = Top2000Ingestor(fetch_text=lambda: text)
+        edition = ingestor.fetch(EditionRef({"year": 2025}))
+        assert edition.ref == EditionRef({"year": 2025})
+        assert edition.size == SIZE
+        assert len(edition.entries) == SIZE
+        assert [e.position for e in edition.entries] == list(range(1, SIZE + 1))
+        assert all(len(e.songs) == 1 for e in edition.entries)
+        assert edition.entries[1].songs[0].title == "Side A/Side B"
+        assert edition.entries[0].songs[0].artist == "Artist 1"
+
+    def test_fetch_incomplete_year_is_ingest_error(self):
+        text = _generated_table({1999: SIZE, 2025: 10})
+        ingestor = Top2000Ingestor(fetch_text=lambda: text)
+        with pytest.raises(IngestError, match=r"2025.*1999"):
+            ingestor.fetch(EditionRef({"year": 2025}))
+
+    def test_fetch_absent_year_is_ingest_error(self):
+        text = _generated_table({1999: SIZE})
+        ingestor = Top2000Ingestor(fetch_text=lambda: text)
+        with pytest.raises(IngestError, match=r"1980.*1999"):
+            ingestor.fetch(EditionRef({"year": 1980}))
+
+    def test_page_fetched_once_per_instance(self):
+        calls = []
+        text = _generated_table({1999: SIZE, 2000: SIZE})
+
+        def fetch_text():
+            calls.append(1)
+            return text
+
+        ingestor = Top2000Ingestor(fetch_text=fetch_text)
+        list(ingestor.editions())
+        ingestor.fetch(EditionRef({"year": 1999}))
+        ingestor.fetch(EditionRef({"year": 2000}))
+        assert len(calls) == 1
+
+    def test_failed_fetch_is_ingest_error_and_retried(self):
+        import requests
+
+        attempts = []
+        text = _generated_table({1999: SIZE})
+
+        def fetch_text():
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise requests.ConnectionError("no route")
+            return text
+
+        ingestor = Top2000Ingestor(fetch_text=fetch_text)
+        with pytest.raises(IngestError, match="cannot fetch.*no route"):
+            list(ingestor.editions())
+        assert list(ingestor.editions()) == [EditionRef({"year": 1999})]
+        assert len(attempts) == 2
