@@ -19,6 +19,17 @@ CI runs these on every pull request and on pushes to `main`, across Python
 
 `ruff format .` applies formatting; `ruff check --fix .` applies safe lint fixes.
 
+The tests run against an editable install, which cannot see what the wheel
+leaves out. A separate CI job, and `release.yml` before it publishes, runs
+
+    python scripts/check_dist.py
+
+which builds the sdist and wheel, checks the wheel holds exactly the Python
+files git tracks under `beetsplug/`, then installs it into a fresh virtualenv
+and imports the plugin from outside the checkout. Run it locally (it needs
+`pip install build` and network access) when you change packaging config or
+add a module.
+
 ## Commits
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/)
