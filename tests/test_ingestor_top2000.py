@@ -6,15 +6,19 @@ import logging
 from pathlib import Path
 
 import pytest
+import requests
 
 from beetsplug.hitlisttag.ingest import EditionRef, IngestError
 from beetsplug.hitlisttag.ingestors.top2000 import (
+    PAGE_URL,
     SIZE,
     Row,
     Table,
     Top2000Ingestor,
     _clean,
     _decode_year,
+    _download_page,
+    _user_agent,
     parse_table,
 )
 
@@ -237,3 +241,50 @@ class TestTop2000Ingestor:
             list(ingestor.editions())
         assert list(ingestor.editions()) == [EditionRef({"year": 1999})]
         assert len(attempts) == 2
+
+
+class TestDefaultFetcher:
+    def test_user_agent_identifies_tool_and_contact(self):
+        ua = _user_agent()
+        assert ua.startswith("beets-hitlisttag/")
+        assert "(+https://github.com/pvliesdonk/beets-hitlisttag)" in ua
+        assert f"requests/{requests.__version__}" in ua
+
+    def test_download_calls_requests_with_url_agent_and_timeout(self, monkeypatch):
+        captured = {}
+
+        class Response:
+            text = "page text"
+
+            def raise_for_status(self):
+                pass
+
+        def fake_get(url, headers=None, timeout=None):
+            captured.update(url=url, headers=headers, timeout=timeout)
+            return Response()
+
+        monkeypatch.setattr(requests, "get", fake_get)
+        assert _download_page() == "page text"
+        assert captured["url"] == PAGE_URL
+        assert captured["headers"]["User-Agent"] == _user_agent()
+        assert captured["timeout"] == 30
+
+    def test_http_error_propagates_as_request_exception(self, monkeypatch):
+        class Response:
+            def raise_for_status(self):
+                raise requests.HTTPError("503 Service Unavailable")
+
+        monkeypatch.setattr(requests, "get", lambda *a, **k: Response())
+        # The ingestor turns this into an IngestError (covered in Task 2); the
+        # fetcher itself lets requests' own exception through.
+        with pytest.raises(requests.HTTPError):
+            _download_page()
+
+    def test_default_ingestor_turns_http_error_into_ingest_error(self, monkeypatch):
+        class Response:
+            def raise_for_status(self):
+                raise requests.HTTPError("503 Service Unavailable")
+
+        monkeypatch.setattr(requests, "get", lambda *a, **k: Response())
+        with pytest.raises(IngestError, match="cannot fetch.*503"):
+            list(Top2000Ingestor().editions())

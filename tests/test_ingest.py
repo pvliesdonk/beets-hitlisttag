@@ -321,6 +321,14 @@ class TestDiscoverBundled:
 INGESTOR_FIXTURES = Path(__file__).parent / "fixtures" / "ingestors"
 
 
+class TestBundledTop2000:
+    def test_real_bundled_package_exposes_top2000(self):
+        # Without the `bundled` fixture: the real package is scanned.
+        found = discover_ingestors(None, log=log)
+        assert "top2000" in found
+        assert found["top2000"].axes == ("year",)
+
+
 class TestDiscoverDropIns:
     def test_fixture_directory(self, bundled, caplog):
         with caplog.at_level(logging.WARNING):

@@ -27,6 +27,7 @@ dynamic = ["version"]
 dependencies = [
     "beets>=2.12",
     "mediafile>=0.17.0",
+    "requests>=2.25",
 ]
 
 [project.urls]

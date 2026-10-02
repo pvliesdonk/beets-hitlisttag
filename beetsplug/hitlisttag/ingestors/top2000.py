@@ -18,6 +18,7 @@ import logging
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from importlib import metadata
 
 import requests
 
@@ -31,6 +32,12 @@ from beetsplug.hitlisttag.ingest import (
 
 SIZE = 2000
 """Positions per edition; the chart's size by definition."""
+
+PAGE_URL = (
+    "https://nl.wikipedia.org/w/index.php"
+    "?title=Lijst_van_Radio_2-Top_2000%27s&action=raw"
+)
+"""The consolidated table as raw wikitext; a page rename is a one-line fix."""
 
 _ABSENT = {"", "—", "×"}
 """Position cells meaning "not listed" / "not yet released"."""
@@ -211,5 +218,24 @@ class Top2000Ingestor:
         return AcquiredEdition(ref, SIZE, tuple(entries))
 
 
-def _download_page() -> str:  # replaced by the real fetcher in the next task
-    raise IngestError("cannot fetch the Top 2000 page: no fetcher configured")
+def _user_agent() -> str:
+    """Wikimedia's User-Agent policy shape: tool/version (contact) library/version."""
+    try:
+        version = metadata.version("beets-hitlisttag")
+    except metadata.PackageNotFoundError:
+        version = "dev"
+    return (
+        f"beets-hitlisttag/{version} "
+        f"(+https://github.com/pvliesdonk/beets-hitlisttag) "
+        f"requests/{requests.__version__}"
+    )
+
+
+def _download_page() -> str:
+    """Fetch the page; ``requests`` exceptions propagate for the caller to wrap."""
+    response = requests.get(PAGE_URL, headers={"User-Agent": _user_agent()}, timeout=30)
+    response.raise_for_status()
+    return response.text
+
+
+INGESTOR = Top2000Ingestor()
