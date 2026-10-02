@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from beetsplug.hitlisttag.dataset import Edition, Entry, Song
 from beetsplug.hitlisttag.ingest import (
     AcquiredEdition,
     DiscoveryError,
@@ -449,3 +450,35 @@ class TestIngestorDirConfig:
         monkeypatch.setenv("HOME", "/home/someone")
         plugin.config["ingestor_dir"] = "~/ingestors"
         assert plugin.ingestor_dir == Path("/home/someone/ingestors")
+
+
+class TestPluggabilityProof:
+    """#99's acceptance clause: an ingestor outside beetsplug/ is discovered
+    and used, and what it yields fits the dataset the reader accepts."""
+
+    def test_fixture_ingestor_drives_the_contract_end_to_end(self, bundled):
+        found = discover_ingestors(INGESTOR_FIXTURES, log=log)
+        ingestor = found["testchart"]
+        assert not type(ingestor).__module__.startswith("beetsplug.")
+
+        refs = list(ingestor.editions())
+        assert refs == [EditionRef({"year": 2001}), EditionRef({"year": 2002})]
+
+        for ref in refs:
+            acquired = acquire_edition(ingestor, ref)
+            # What #100 will do: mint ids and build a dataset Edition. Doing
+            # it here proves the contract's output satisfies the dataset's
+            # invariants without needing the tool.
+            ids: dict[tuple[str, str], str] = {}
+            entries = []
+            for raw in acquired.entries:
+                songs = []
+                for raw_song in raw.songs:
+                    key = (raw_song.artist, raw_song.title)
+                    song_id = ids.setdefault(key, str(len(ids) + 1))
+                    songs.append(Song(song_id, raw_song.artist, raw_song.title))
+                entries.append(Entry(raw.position, songs))
+            edition = Edition(dict(acquired.ref.axes), acquired.size, entries)
+            assert edition.size == 3
+            assert [e.position for e in edition.entries] == [1, 2]
+            assert len(edition.entries[1].songs) == 2  # the two-song release
