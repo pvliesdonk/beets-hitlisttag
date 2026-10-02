@@ -16,4 +16,8 @@
 | colspan="7" | <small>Spacer row that is not data</small>
 |-
 |align="left"|[[Partial Artist]]||align="left"|Partial Title||2001||6||—||6||—
+|-
+|align="left"|{{Sorteer|Jacksons, The|[[The Jacksons (band)|The Jacksons]]}}||align="left"|Boogie Blame||1978||7||7||7||7
+|-
+|align="left"|{{SortNaam|De|Dijk|De Dijk (band)}}||align="left"|Stad Zonder Naam||1989||8||—||8||8
 |}

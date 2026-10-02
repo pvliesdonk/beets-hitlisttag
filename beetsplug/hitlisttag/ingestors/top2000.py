@@ -42,6 +42,12 @@ PAGE_URL = (
 _ABSENT = {"", "—", "×"}
 """Position cells meaning "not listed" / "not yet released"."""
 
+_FIXED_COLUMNS = ["Artiest", "Titel", "Jaar", "HP"]
+"""The header cells before the year columns; anything else is a layout change."""
+
+_LEFTOVER_MARKUP = ("{{", "}}", "[[", "]]", "|")
+"""Markup that must not survive cleaning; a name carrying it is rejected."""
+
 _log = logging.getLogger(__name__)
 
 
@@ -73,7 +79,10 @@ def _decode_year(cell: str) -> int:
 
 _REF = re.compile(r"<ref[^>]*>.*?</ref>|<ref[^>]*/>", re.S)
 _TAG = re.compile(r"<[^>]+>")
-_SORTNAAM = re.compile(r"\{\{SortNaam\|([^|}]*)\|([^}]*)\}\}")
+_SORTNAAM = re.compile(r"\{\{SortNaam\|([^|}]*)\|([^|}]*)(?:\|[^}]*)?\}\}")
+"""``{{SortNaam|prefix|name}}`` or ``{{SortNaam|prefix|name|link target}}``."""
+_SORTEER = re.compile(r"\{\{Sorteer\|[^|}]*\|([^}]*)\}\}")
+"""``{{Sorteer|sort key|display}}``; the display may itself be a wikilink."""
 _ABBR = re.compile(r"\{\{Abbr\|([^|}]*)\|[^}]*\}\}")
 _LINK = re.compile(r"\[\[(?:[^|\]]*\|)?([^\]]*)\]\]")
 _ATTR = re.compile(r'^\s*align="[a-z]+"\|')
@@ -88,6 +97,7 @@ def _clean(cell: str) -> str:
     cell = _REF.sub("", cell)
     cell = _TAG.sub("", cell)
     cell = _SORTNAAM.sub(lambda m: f"{m.group(1)} {m.group(2)}", cell)
+    cell = _SORTEER.sub(lambda m: m.group(1), cell)
     cell = _ABBR.sub(lambda m: m.group(1), cell)
     cell = _LINK.sub(lambda m: m.group(1), cell)
     cell = _ATTR.sub("", cell)
@@ -113,6 +123,10 @@ def parse_table(wikitext: str) -> Table:
     if header_index is None:
         raise _layout_error("no header row with 'Artiest' and 'Titel' found")
     header = [_clean(c) for c in lines[header_index].lstrip("!").split("||")]
+    if header[:4] != _FIXED_COLUMNS:
+        raise _layout_error(
+            f"header starts with {header[:4]!r}, expected {_FIXED_COLUMNS!r}"
+        )
     years = tuple(_decode_year(c) for c in header[4:])
     if not years:
         raise _layout_error("header has no year columns")
@@ -128,9 +142,10 @@ def parse_table(wikitext: str) -> Table:
             continue  # spacer or caption row, not data
         artist, title = _clean(cells[0]), _clean(cells[1])
         for text in (artist, title):
-            if "{{" in text:
+            if any(marker in text for marker in _LEFTOVER_MARKUP):
                 raise IngestError(
-                    f"row {artist!r} / {title!r} contains an unknown template"
+                    f"row {artist!r} / {title!r} contains an unknown template "
+                    "or leftover markup"
                 )
         positions: dict[int, int] = {}
         for year, raw in zip(years, cells[4 : 4 + len(years)], strict=True):

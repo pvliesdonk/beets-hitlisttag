@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -85,6 +86,8 @@ class TestParseTable:
             "505",
             "Only Recent",
             "Partial Title",
+            "Boogie Blame",
+            "Stad Zonder Naam",
         ]
         assert _row(table, "Made Up Song").artist == "Fixture Band"
         assert _row(table, "Made Up Song").positions == {1999: 1, 2000: 1, 2025: 2}
@@ -288,3 +291,65 @@ class TestDefaultFetcher:
         monkeypatch.setattr(requests, "get", lambda *a, **k: Response())
         with pytest.raises(IngestError, match="cannot fetch.*503"):
             list(Top2000Ingestor().editions())
+
+
+class TestFinalReviewFixes:
+    """Findings from the whole-branch review against the real page."""
+
+    def test_sorteer_template_keeps_display_text(self):
+        # Critical 1: the real page uses {{Sorteer|sortkey|display}}.
+        assert _clean("{{Sorteer|Jacksons, The|[[The Jacksons]]}}") == "The Jacksons"
+        row = _row(parse_table(_fixture()), "Boogie Blame")
+        assert row.artist == "The Jacksons"
+
+    def test_four_argument_sortnaam_drops_link_target(self):
+        # Critical 2: {{SortNaam|prefix|name|link target}} must not leak the target.
+        assert _clean("{{SortNaam|De|Dijk|De Dijk (band)}}") == "De Dijk"
+        row = _row(parse_table(_fixture()), "Stad Zonder Naam")
+        assert row.artist == "De Dijk"
+        assert row.positions == {2000: 8, 2025: 8}
+
+    @pytest.mark.parametrize("leftover", ["Solo|Artist", "[[Solo Artist", "Solo}}"])
+    def test_leftover_markup_in_name_names_row(self, leftover):
+        text = _fixture().replace("[[Solo Artist]]", leftover)
+        with pytest.raises(IngestError, match=r"Side A/Side B.*markup"):
+            parse_table(text)
+
+    def test_missing_fixed_header_column_is_layout_error(self):
+        # Important 3: a dropped HP column must not silently shift every year.
+        text = _fixture().replace("||{{Abbr|HP|Hoogste behaalde positie}}", "")
+        with pytest.raises(IngestError, match="layout changed.*header"):
+            parse_table(text)
+
+    def test_bom_and_crlf_with_header_on_first_line(self):
+        # Important 4: the BOM must be stripped where it matters, and rows survive.
+        plain = parse_table(_fixture())
+        body = "\n".join(_fixture().split("\n")[1:])  # header is now line 0
+        text = "\ufeff" + body.replace("\n", "\r\n")
+        table = parse_table(text)
+        assert table.years == plain.years
+        assert table.rows == plain.rows
+
+
+@pytest.mark.skipif(
+    not os.environ.get("HITLISTTAG_TOP2000_WIKITEXT"),
+    reason="set HITLISTTAG_TOP2000_WIKITEXT to a saved copy of the real page",
+)
+def test_real_page_parses_completely():
+    """Opt-in check against a locally saved copy of the real page; commits no data."""
+    path = Path(os.environ["HITLISTTAG_TOP2000_WIKITEXT"])
+    ingestor = Top2000Ingestor(fetch_text=lambda: path.read_text(encoding="utf-8"))
+    table = parse_table(path.read_text(encoding="utf-8"))
+    assert len(table.years) >= 27 and table.years[0] == 1999
+    assert len(table.rows) >= 4900
+    refs = list(ingestor.editions())
+    assert [r.axes["year"] for r in refs] == list(table.years)  # every year complete
+    for ref in refs:
+        edition = ingestor.fetch(ref)
+        assert len(edition.entries) == SIZE
+    bad = [
+        (r.artist, r.title)
+        for r in table.rows
+        if any(m in r.artist + r.title for m in ("{{", "}}", "[[", "]]", "|"))
+    ]
+    assert bad == []
