@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 from typing import Any
 
 import confuse
-from beets import library, ui
+from beets import config, library, ui
 from beets import logging as beets_logging
 from beets.dbcore import Results, types
 from beets.dbcore.query import SQLiteType
@@ -133,6 +134,7 @@ class HitlistTag(BeetsPlugin):
                 "format": "$artist - $album - $title",
                 "hitlists": DEFAULT_HITLISTS,
                 "dataset_dir": None,
+                "ingestor_dir": "ingestors",
             }
         )
 
@@ -195,6 +197,22 @@ class HitlistTag(BeetsPlugin):
         if self.config["dataset_dir"].get() is None:
             return None
         return self.config["dataset_dir"].as_path()
+
+    @property
+    def ingestor_dir(self) -> Path:
+        """Resolved drop-in ingestor directory; always absolute.
+
+        Defaults to ``ingestors`` under the beets configuration directory,
+        so discovery works with no configuration at all. Resolution is done
+        explicitly (``~`` expanded, a relative path joined to the config
+        directory) rather than via confuse's ``as_path``, whose base for a
+        value supplied by ``config.add`` is not the config directory.
+        """
+        raw = self.config["ingestor_dir"].as_str()
+        path = Path(os.path.expanduser(raw))
+        if not path.is_absolute():
+            path = Path(config.config_dir()) / path
+        return path
 
     def loaded(self):
         self._log.info("HitlistTag plugin loaded")

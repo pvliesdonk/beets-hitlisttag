@@ -413,3 +413,39 @@ class TestDiscoverDropIns:
             locked.chmod(0o755)
         assert set(found) == {"fromcode"}
         assert "cannot read ingestor directory" in caplog.text
+
+
+class TestIngestorDirConfig:
+    @pytest.fixture
+    def plugin(self):
+        from beets import config
+        from beets.plugins import find_plugins, load_plugins
+        from beets.test.helper import TestHelper
+
+        from beetsplug.hitlisttag import HitlistTag
+
+        helper = TestHelper()
+        with helper:
+            config["plugins"] = ["hitlisttag"]
+            load_plugins()
+            yield next(p for p in find_plugins() if isinstance(p, HitlistTag))
+
+    def test_default_is_ingestors_under_config_dir(self, plugin):
+        from beets import config
+
+        assert plugin.ingestor_dir == Path(config.config_dir()) / "ingestors"
+
+    def test_relative_path_resolves_against_config_dir(self, plugin):
+        from beets import config
+
+        plugin.config["ingestor_dir"] = "my/scripts"
+        assert plugin.ingestor_dir == Path(config.config_dir()) / "my" / "scripts"
+
+    def test_absolute_path_kept(self, plugin):
+        plugin.config["ingestor_dir"] = "/opt/ingestors"
+        assert plugin.ingestor_dir == Path("/opt/ingestors")
+
+    def test_tilde_expanded(self, plugin, monkeypatch):
+        monkeypatch.setenv("HOME", "/home/someone")
+        plugin.config["ingestor_dir"] = "~/ingestors"
+        assert plugin.ingestor_dir == Path("/home/someone/ingestors")
