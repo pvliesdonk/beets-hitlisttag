@@ -21,10 +21,12 @@ import importlib.util
 import logging
 import os
 import pkgutil
+import stat
 import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Protocol, runtime_checkable
 
 
@@ -99,8 +101,9 @@ class EditionRef:
                 raise ValueError(f"axis name {name!r} must be a non-empty string")
             if not _is_int(value) or value < 1:
                 raise ValueError(f"axis {name!r} must be an integer >= 1")
-        # Copy so a caller mutating its dict afterwards cannot change the ref.
-        object.__setattr__(self, "axes", dict(self.axes))
+        # Copy behind a read-only view: a ref is hashable, so neither the
+        # caller's dict nor ``ref.axes`` itself may change it afterwards.
+        object.__setattr__(self, "axes", MappingProxyType(dict(self.axes)))
 
     def _key(self) -> tuple[tuple[str, int], ...]:
         return tuple(sorted(self.axes.items()))
@@ -129,6 +132,8 @@ class AcquiredEdition:
     entries: tuple[RawEntry, ...]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.ref, EditionRef):
+            raise ValueError("ref must be an EditionRef")
         if not _is_int(self.size) or self.size < 1:
             raise ValueError("size must be an integer >= 1")
         seen: set[int] = set()
@@ -177,6 +182,11 @@ def acquire_edition(ingestor: Ingestor, ref: EditionRef) -> AcquiredEdition:
             f"but edition ref has {sorted(ref.axes)!r}"
         )
     edition = ingestor.fetch(ref)
+    if not isinstance(edition, AcquiredEdition):
+        raise IngestError(
+            f"ingestor for {ingestor.chart!r} returned {type(edition).__name__} "
+            f"instead of an AcquiredEdition for {ref.axes!r}"
+        )
     if edition.ref != ref:
         raise IngestError(
             f"ingestor for {ingestor.chart!r} returned edition {edition.ref.axes!r} "
@@ -260,22 +270,31 @@ def _iter_drop_in_files(directory: Path, log: logging.Logger) -> list[Path]:
 
     No recursion, so subdirectories (symlinked or not) are never entered;
     ``_``-prefixed files are skipped; the suffix is case-sensitive. A missing
-    directory yields nothing; an unreadable one is warned about.
+    directory yields nothing; an unreadable directory, or a file that cannot
+    be examined, is warned about. ``os`` calls are used directly because
+    ``Path.is_dir``/``is_file`` raise ``PermissionError`` before Python 3.14
+    and swallow it from 3.14 on -- neither is the warning the user needs.
     """
-    if not directory.is_dir():
-        return []
     try:
         names = sorted(os.listdir(directory))
+    except FileNotFoundError:
+        return []
     except OSError as err:
         log.warning(f"cannot read ingestor directory {str(directory)!r}: {err}")
         return []
-    return [
-        directory / name
-        for name in names
-        if name.endswith(".py")
-        and not name.startswith("_")
-        and (directory / name).is_file()
-    ]
+    files: list[Path] = []
+    for name in names:
+        if not name.endswith(".py") or name.startswith("_"):
+            continue
+        path = directory / name
+        try:
+            mode = os.stat(path).st_mode
+        except OSError as err:
+            log.warning(f"cannot read ingestor {path}: {err}")
+            continue
+        if stat.S_ISREG(mode):
+            files.append(path)
+    return files
 
 
 def _load_drop_in(path: Path, log: logging.Logger) -> Ingestor | None:
@@ -295,7 +314,7 @@ def _load_drop_in(path: Path, log: logging.Logger) -> Ingestor | None:
     sys.modules[name] = module
     try:
         spec.loader.exec_module(module)
-    except Exception as err:  # a script may raise anything at import
+    except (Exception, SystemExit) as err:  # a script may raise or exit at import
         del sys.modules[name]
         log.warning(f"cannot load ingestor {path}: {err!r}")
         return None

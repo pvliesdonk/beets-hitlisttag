@@ -482,3 +482,72 @@ class TestPluggabilityProof:
             assert edition.size == 3
             assert [e.position for e in edition.entries] == [1, 2]
             assert len(edition.entries[1].songs) == 2  # the two-song release
+
+
+class TestFinalReviewFixes:
+    """Findings from the whole-branch review, each pinned before its fix."""
+
+    def test_non_traversable_parent_is_warned_and_skipped(
+        self, bundled, tmp_path, caplog
+    ):
+        # Path.is_dir() raises PermissionError before 3.14 and returns False
+        # on 3.14; either way the user must get a warning, not a crash or
+        # silence.
+        if os.geteuid() == 0:
+            pytest.skip("root can read anything")
+        parent = tmp_path / "parent"
+        target = parent / "ingestors"
+        _write_script(target, "inside")
+        parent.chmod(0o000)
+        try:
+            with caplog.at_level(logging.WARNING):
+                found = discover_ingestors(target, log=log)
+        finally:
+            parent.chmod(0o755)
+        assert found == {}
+        assert "cannot read ingestor directory" in caplog.text
+
+    def test_listable_but_not_traversable_directory_warns_per_file(
+        self, bundled, tmp_path, caplog
+    ):
+        if os.geteuid() == 0:
+            pytest.skip("root can read anything")
+        _write_script(tmp_path, "inside")
+        tmp_path.chmod(0o444)
+        try:
+            with caplog.at_level(logging.WARNING):
+                found = discover_ingestors(tmp_path, log=log)
+        finally:
+            tmp_path.chmod(0o755)
+        assert found == {}
+        assert "inside.py" in caplog.text
+
+    def test_acquired_edition_requires_an_edition_ref(self):
+        with pytest.raises(ValueError, match="ref"):
+            AcquiredEdition({"year": 2023}, 3, ())  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("bad", [None, {"year": 2023}])
+    def test_fetch_returning_non_edition_is_ingest_error(self, bad):
+        class Wrong(_FakeIngestor):
+            def fetch(self, ref):
+                return bad
+
+        with pytest.raises(IngestError, match="fakechart"):
+            acquire_edition(Wrong({}), EditionRef({"year": 2023}))
+
+    def test_script_calling_sys_exit_is_warned_and_skipped(
+        self, bundled, tmp_path, caplog
+    ):
+        _write_script(tmp_path, "good")
+        (tmp_path / "quitter.py").write_text("raise SystemExit(1)\n", encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            found = discover_ingestors(tmp_path, log=log)
+        assert set(found) == {"good"}
+        assert "quitter.py" in caplog.text
+        assert "hitlisttag_ingestor_quitter" not in sys.modules
+
+    def test_edition_ref_axes_cannot_be_mutated(self):
+        ref = EditionRef({"year": 2023})
+        with pytest.raises(TypeError):
+            ref.axes["year"] = 1999  # type: ignore[index]
+        assert ref.axes == {"year": 2023}
