@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -314,3 +315,101 @@ class TestDiscoverBundled:
         _write_script(bundled, "two", chart="dup")
         with pytest.raises(DiscoveryError, match="dup"):
             discover_ingestors(None, log=log)
+
+
+INGESTOR_FIXTURES = Path(__file__).parent / "fixtures" / "ingestors"
+
+
+class TestDiscoverDropIns:
+    def test_fixture_directory(self, bundled, caplog):
+        with caplog.at_level(logging.WARNING):
+            found = discover_ingestors(INGESTOR_FIXTURES, log=log)
+        assert set(found) == {"testchart"}
+        # Each unusable script is warned about by path, and discovery went on.
+        assert "broken_import.py" in caplog.text and "boom at import" in caplog.text
+        assert "no_ingestor.py" in caplog.text and "no INGESTOR" in caplog.text
+        assert "bad_axes.py" in caplog.text and "axes" in caplog.text
+        assert "_private.py" not in caplog.text and "hidden" not in found
+
+    def test_missing_directory_is_not_an_error(self, bundled, tmp_path, caplog):
+        with caplog.at_level(logging.WARNING):
+            assert discover_ingestors(tmp_path / "absent", log=log) == {}
+        assert caplog.text == ""
+
+    def test_only_top_level_py_files(self, bundled, tmp_path):
+        _write_script(tmp_path, "top")
+        _write_script(tmp_path / "sub", "nested")
+        (tmp_path / "notes.txt").write_text("INGESTOR = 1", encoding="utf-8")
+        (tmp_path / "UPPER.PY").write_text("INGESTOR = 1", encoding="utf-8")
+        assert set(discover_ingestors(tmp_path, log=log)) == {"top"}
+
+    def test_drop_in_overrides_bundled_with_notice(self, bundled, tmp_path, caplog):
+        _write_script(bundled, "shared")
+        drop_in = _write_script(tmp_path, "mine", chart="shared")
+        with caplog.at_level(logging.INFO):
+            found = discover_ingestors(tmp_path, log=log)
+        assert set(found) == {"shared"}
+        assert type(found["shared"]).__module__.startswith("hitlisttag_ingestor_")
+        assert "overrides" in caplog.text and str(drop_in) in caplog.text
+
+    def test_two_drop_ins_same_chart_is_error(self, bundled, tmp_path):
+        a = _write_script(tmp_path, "a", chart="dup")
+        b = _write_script(tmp_path, "b", chart="dup")
+        with pytest.raises(DiscoveryError) as excinfo:
+            discover_ingestors(tmp_path, log=log)
+        assert str(a) in str(excinfo.value) and str(b) in str(excinfo.value)
+
+    def test_script_named_like_stdlib_module_does_not_shadow_it(
+        self, bundled, tmp_path
+    ):
+        # Review focus 1.
+        import json as real_json
+
+        _write_script(tmp_path, "json")
+        found = discover_ingestors(tmp_path, log=log)
+        assert set(found) == {"json"}
+        assert sys.modules["json"] is real_json
+        assert real_json.dumps({"a": 1}) == '{"a": 1}'
+
+    def test_sibling_import_is_warned_not_crashed(self, bundled, tmp_path, caplog):
+        # Review focus 3: drop-ins are not on sys.path.
+        _write_script(tmp_path, "helper")
+        (tmp_path / "uses_helper.py").write_text(
+            "import helper\nINGESTOR = helper.INGESTOR\n", encoding="utf-8"
+        )
+        with caplog.at_level(logging.WARNING):
+            found = discover_ingestors(tmp_path, log=log)
+        assert set(found) == {"helper"}
+        assert "uses_helper.py" in caplog.text and "helper" in caplog.text
+
+    def test_unreadable_script_is_warned_and_skipped(self, bundled, tmp_path, caplog):
+        # Review focus 5.
+        if os.geteuid() == 0:
+            pytest.skip("root can read anything")
+        _write_script(tmp_path, "good")
+        locked = _write_script(tmp_path, "locked")
+        locked.chmod(0o000)
+        try:
+            with caplog.at_level(logging.WARNING):
+                found = discover_ingestors(tmp_path, log=log)
+        finally:
+            locked.chmod(0o644)
+        assert set(found) == {"good"}
+        assert "locked.py" in caplog.text
+
+    def test_unreadable_directory_is_warned_and_skipped(
+        self, bundled, tmp_path, caplog
+    ):
+        if os.geteuid() == 0:
+            pytest.skip("root can read anything")
+        _write_script(bundled, "fromcode")
+        locked = tmp_path / "locked"
+        locked.mkdir()
+        locked.chmod(0o000)
+        try:
+            with caplog.at_level(logging.WARNING):
+                found = discover_ingestors(locked, log=log)
+        finally:
+            locked.chmod(0o755)
+        assert set(found) == {"fromcode"}
+        assert "cannot read ingestor directory" in caplog.text

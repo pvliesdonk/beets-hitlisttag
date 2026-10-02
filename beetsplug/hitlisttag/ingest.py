@@ -17,8 +17,11 @@ configured ``ingestor_dir``.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import logging
+import os
 import pkgutil
+import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -249,6 +252,56 @@ def _claim(
     found[ingestor.chart] = (origin, ingestor)
 
 
+_DROP_IN_PREFIX = "hitlisttag_ingestor_"
+
+
+def _iter_drop_in_files(directory: Path, log: logging.Logger) -> list[Path]:
+    """Top-level ``*.py`` files in ``directory``, sorted by name.
+
+    No recursion, so subdirectories (symlinked or not) are never entered;
+    ``_``-prefixed files are skipped; the suffix is case-sensitive. A missing
+    directory yields nothing; an unreadable one is warned about.
+    """
+    if not directory.is_dir():
+        return []
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError as err:
+        log.warning(f"cannot read ingestor directory {str(directory)!r}: {err}")
+        return []
+    return [
+        directory / name
+        for name in names
+        if name.endswith(".py")
+        and not name.startswith("_")
+        and (directory / name).is_file()
+    ]
+
+
+def _load_drop_in(path: Path, log: logging.Logger) -> Ingestor | None:
+    """Import ``path`` under a synthetic module name and validate its INGESTOR.
+
+    The synthetic name keeps a script called ``json.py`` from shadowing the
+    real module, and the file's directory is never added to ``sys.path``, so
+    a script cannot import a sibling file. Any failure to import is warned
+    about by path and the script is skipped.
+    """
+    name = f"{_DROP_IN_PREFIX}{path.stem}"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        log.warning(f"cannot load ingestor {path}: not importable")
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as err:  # a script may raise anything at import
+        del sys.modules[name]
+        log.warning(f"cannot load ingestor {path}: {err!r}")
+        return None
+    return _validated(module, str(path), log)
+
+
 def discover_ingestors(
     drop_in_dir: Path | None, *, log: logging.Logger
 ) -> dict[str, Ingestor]:
@@ -264,4 +317,20 @@ def discover_ingestors(
         ingestor = _load_bundled(module_name, log)
         if ingestor is not None:
             _claim(bundled, ingestor, module_name, "bundled")
-    return {chart: ingestor for chart, (_origin, ingestor) in bundled.items()}
+
+    drop_ins: dict[str, tuple[str, Ingestor]] = {}
+    if drop_in_dir is not None:
+        for path in _iter_drop_in_files(drop_in_dir, log):
+            ingestor = _load_drop_in(path, log)
+            if ingestor is not None:
+                _claim(drop_ins, ingestor, str(path), "drop-in")
+
+    found = {chart: ingestor for chart, (_origin, ingestor) in bundled.items()}
+    for chart, (origin, ingestor) in drop_ins.items():
+        if chart in bundled:
+            log.info(
+                f"drop-in ingestor {origin} overrides bundled "
+                f"{bundled[chart][0]} for chart {chart!r}"
+            )
+        found[chart] = ingestor
+    return found
