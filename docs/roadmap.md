@@ -215,7 +215,13 @@ remain. `derived`.
   `beetsplug/hitlisttag/dataset.py` (module docstring and the `Edition`
   and `Entry` dataclasses, which now own the per-edition invariants) and
   README, *The chart dataset*. The minted-id question is untouched by
-  milestone 6 and still points at milestone 7.
+  milestone 6 and still points at milestone 7. *Minted-id question resolved
+  (2026-10-02, milestone 7 refinement):* a forced wholesale re-acquisition
+  keeps a song's id where the song recurs — its normalized artist/title
+  already exists in the chart's file — and mints ids only for new songs;
+  the default incremental refresh never re-mints at all. `stated`
+  (originated as an agent proposal, endorsed by the user); carried by
+  [#101](https://github.com/pvliesdonk/beets-hitlisttag/issues/101).
 - **Score beyond the Top 40.** *Resolved structurally (2026-08-04,
   milestone 6 refinement).* The positional-points sum over declared edition
   sizes — official for the Top 40 (`stated`) — ships as the default for
@@ -234,6 +240,22 @@ remain. `derived`.
   and whether anti-bot measures apply. Not knowing changes nothing now — the
   ingestor abstraction is source-agnostic by design. Resolved by: refining
   milestone 7 (Top 2000) and milestone 10 (Top 40, Top 100). `derived`.
+  *Ticketed for the Top 2000 (2026-10-02):* the user does not know the
+  source offhand (`stated`), so refining milestone 7 turned this half into
+  research issue [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98)
+  with a half-day appetite (`derived` — the user may revise it) that blocks
+  the Top 2000 ingestor. Not knowing now *does* change what happens next:
+  if the appetite runs out or no viable public source exists, *Top 2000
+  first* is wrong and another chart leads the milestone — a change of
+  direction to record here, not a request for more time. The Top 40 /
+  Top 100 half still waits on milestone 10's refinement.
+- **Ingestor plug-in mechanism.** How a third party's ingestor is found —
+  Python entry points, a config-pointed module path, or both — is a
+  feature-level decision the user deliberately left to the contract
+  feature's brainstorm (`stated`, 2026-10-02). Resolved by:
+  [#99](https://github.com/pvliesdonk/beets-hitlisttag/issues/99). Whatever
+  is chosen, the proof is an ingestor outside the package being discovered
+  and used. `derived`.
 - **Curation scale.** How many entries need hand attention after automatic
   normalization — this decides how much curation tooling milestone 8 must
   carry. Resolved by: refining milestone 8 against milestone 7's real data.
@@ -375,3 +397,21 @@ remain. `derived`.
 - 2026-08-19 — milestone 7 (acquisition framework) is unblocked: its
   refinement issue (#71) was waiting on the edition format (#75), which
   shipped. It is next; no change to the ordering argument, which held.
+- 2026-10-02 — milestone 7 (acquisition framework) refined into six work
+  items (#99–#104) and one research spike (#98): the ingestor contract and
+  discovery, the acquisition executable, incremental refresh and forced
+  re-acquisition, the Top 2000 ingestor, documentation for users and
+  ingestor authors, and an end-to-end pin of the acceptance criterion. Four
+  decisions from the user this session, each originating as an agent
+  proposal: the Top 2000 source is unknown and gets a spike rather than a
+  guess; the plug-in mechanism is left to the contract feature's brainstorm;
+  a real ingestor's test fixtures are synthetic or trimmed pages, never a
+  complete edition; and a forced re-acquisition preserves ids for recurring
+  songs. The milestone 6 failure-state lesson is applied in the acquisition
+  executable's own text: the all-or-nothing write is a stated invariant,
+  not a detail for the implementer to discover. Two cross-milestone edges
+  encoded that the ordering argument had only argued: refining milestone 8
+  (#72) is blocked by the Top 2000 ingestor (#102) — the ontology is
+  designed against real acquired data — and refining milestone 10 (#74) is
+  blocked by the ingestor contract (#99), which the Top 40 and Top 100
+  ingestors will implement. No change to direction or ordering.
