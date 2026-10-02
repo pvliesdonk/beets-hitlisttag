@@ -32,3 +32,19 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest -q
+
+  package:
+    # The test job uses an editable install, which cannot see what the wheel
+    # leaves out. This builds the sdist and wheel, checks the wheel's contents
+    # against the tracked tree, and smoke-imports it from outside the checkout.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # hatch-vcs derives the version from git history/tags
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10" # the supported floor
+      - run: python -m pip install --upgrade pip build
+      - run: python scripts/check_dist.py

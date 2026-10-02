@@ -23,5 +23,7 @@ jobs:
         with:
           python-version: "3.x"
       - run: python -m pip install --upgrade build
-      - run: python -m build
+      # Builds into dist/ and refuses to continue if the wheel is incomplete
+      # or does not import from outside the checkout.
+      - run: python scripts/check_dist.py
       - uses: pypa/gh-action-pypi-publish@release/v1
