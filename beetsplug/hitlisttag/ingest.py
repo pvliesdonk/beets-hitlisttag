@@ -78,6 +78,12 @@ class RawEntry:
     def __post_init__(self) -> None:
         if not _is_int(self.position) or self.position < 1:
             raise ValueError("position must be an integer >= 1")
+        if isinstance(self.songs, str) or not all(
+            isinstance(song, RawSong) for song in self.songs
+        ):
+            raise ValueError("songs must be a tuple of RawSong")
+        # Normalise so a list passed in cannot be mutated behind the frozen entry.
+        object.__setattr__(self, "songs", tuple(self.songs))
         if not self.songs:
             raise ValueError(f"entry at position {self.position} must have songs")
 
@@ -136,6 +142,11 @@ class AcquiredEdition:
             raise ValueError("ref must be an EditionRef")
         if not _is_int(self.size) or self.size < 1:
             raise ValueError("size must be an integer >= 1")
+        if isinstance(self.entries, str) or not all(
+            isinstance(entry, RawEntry) for entry in self.entries
+        ):
+            raise ValueError("entries must be a tuple of RawEntry")
+        object.__setattr__(self, "entries", tuple(self.entries))
         seen: set[int] = set()
         for entry in self.entries:
             if not 1 <= entry.position <= self.size:
@@ -214,6 +225,8 @@ def _check_ingestor(obj: object) -> str | None:
         or not all(isinstance(a, str) and a for a in axes)
     ):
         return "axes must be a non-empty tuple of non-empty strings"
+    if len(set(axes)) != len(axes):
+        return f"axes {axes!r} contain a duplicate name"
     for method in ("editions", "fetch"):
         if not callable(getattr(obj, method, None)):
             return f"{method} must be a callable"
@@ -311,14 +324,21 @@ def _load_drop_in(path: Path, log: logging.Logger) -> Ingestor | None:
         log.warning(f"cannot load ingestor {path}: not importable")
         return None
     module = importlib.util.module_from_spec(spec)
+    # Registered before execution on purpose: a dataclass defined in the
+    # script resolves its annotations through sys.modules, and the entry is
+    # kept for a usable ingestor so that lookup keeps working afterwards. A
+    # script that fails to load or validate is unregistered again.
     sys.modules[name] = module
     try:
         spec.loader.exec_module(module)
     except (Exception, SystemExit) as err:  # a script may raise or exit at import
-        del sys.modules[name]
+        sys.modules.pop(name, None)
         log.warning(f"cannot load ingestor {path}: {err!r}")
         return None
-    return _validated(module, str(path), log)
+    ingestor = _validated(module, str(path), log)
+    if ingestor is None:
+        sys.modules.pop(name, None)
+    return ingestor
 
 
 def discover_ingestors(

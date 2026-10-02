@@ -176,7 +176,7 @@ class TestAcquireEdition:
         # Review focus 4: a ref for ("year", "week") against a ("year",) chart.
         ref = EditionRef({"year": 2024, "week": 7})
         ingestor = _FakeIngestor({ref: AcquiredEdition(ref, 3, ())})
-        with pytest.raises(IngestError, match="axes"):
+        with pytest.raises(IngestError, match=r"fakechart.*year.*week"):
             acquire_edition(ingestor, ref)
         assert ingestor.fetched == []  # refused before fetch
 
@@ -381,7 +381,8 @@ class TestDiscoverDropIns:
         with caplog.at_level(logging.WARNING):
             found = discover_ingestors(tmp_path, log=log)
         assert set(found) == {"helper"}
-        assert "uses_helper.py" in caplog.text and "helper" in caplog.text
+        assert "uses_helper.py" in caplog.text
+        assert "No module named 'helper'" in caplog.text
 
     def test_unreadable_script_is_warned_and_skipped(self, bundled, tmp_path, caplog):
         # Review focus 5.
@@ -551,3 +552,38 @@ class TestFinalReviewFixes:
         with pytest.raises(TypeError):
             ref.axes["year"] = 1999  # type: ignore[index]
         assert ref.axes == {"year": 2023}
+
+
+class TestPrReviewHardening:
+    """Points 1, 2 and 4 of the PR #106 bot review, pinned before the fix."""
+
+    def test_raw_entry_songs_list_normalised_to_tuple(self):
+        entry = RawEntry(1, [_song()])  # type: ignore[arg-type]
+        assert isinstance(entry.songs, tuple)
+
+    @pytest.mark.parametrize("songs", [("Artist - Title",), ({"artist": "A"},), "ab"])
+    def test_raw_entry_rejects_non_rawsong_elements(self, songs):
+        with pytest.raises(ValueError, match="RawSong"):
+            RawEntry(1, songs)  # type: ignore[arg-type]
+
+    def test_acquired_edition_entries_list_normalised_to_tuple(self):
+        edition = AcquiredEdition(EditionRef({"year": 2023}), 3, [_entry(1)])  # type: ignore[arg-type]
+        assert isinstance(edition.entries, tuple)
+
+    @pytest.mark.parametrize("entries", [((1, ()),), ({"position": 1},)])
+    def test_acquired_edition_rejects_non_rawentry_elements(self, entries):
+        with pytest.raises(ValueError, match="RawEntry"):
+            AcquiredEdition(EditionRef({"year": 2023}), 3, entries)  # type: ignore[arg-type]
+
+    def test_duplicate_axis_names_rejected(self):
+        class Bad(_FakeIngestor):
+            pass
+
+        Bad.axes = ("year", "year")
+        problem = _check_ingestor(Bad({}))
+        assert problem is not None and "duplicate" in problem
+
+    def test_script_failing_validation_is_unregistered(self, bundled, tmp_path):
+        (tmp_path / "novalid.py").write_text("INGESTOR = None\n", encoding="utf-8")
+        assert discover_ingestors(tmp_path, log=log) == {}
+        assert "hitlisttag_ingestor_novalid" not in sys.modules
