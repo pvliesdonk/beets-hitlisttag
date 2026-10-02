@@ -102,16 +102,15 @@ from that dataset. `stated`.
 - **Variant policy.** An explicit version qualifier ("live", "remix", …)
   makes a distinct song; how strictly the beets side matches variants is
   user-configurable. `stated` (2026-08-04; originated as an agent proposal,
-  endorsed by the user). *Evidence meeting this item, surfaced not
-  resolved (2026-10-02):* the viable Top 2000 source strips exactly the
-  qualifier this policy consumes — the official edition file marks a large
-  share of titles "(Albumversie)" and the like; Wikipedia's table omits
-  them (`evidenced`:
-  [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98), closing
-  comment). Open to the user: whether Top 2000 variants are simply
-  unknowable from this source, or whether the official current-edition
-  spreadsheet, downloaded by hand, becomes a user-supplied overlay. Not
-  ticketed; it becomes work when milestone 8 is refined.
+  endorsed by the user). *Checked against the Top 2000 source
+  (2026-10-02):* Wikipedia's table keeps explicit variants as distinct
+  songs — "(live)", "(unplugged)", "(akoestisch)" rows beside the studio
+  version — so the policy holds there; what it omits is "(Albumversie)",
+  the broadcaster's marker for which cut is played, not a distinct song.
+  The user notes a few live versions are merged on Wikipedia, though not
+  many. `stated` (correction of an agent over-reading; `evidenced`:
+  [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98),
+  correction comment).
 - **Raw data is disposable; curation is precious.** Acquired editions are
   re-acquirable at will; hand-curation (aliases, entry–song links, merges,
   splits) must survive full re-acquisition. `derived`.
@@ -166,12 +165,16 @@ throughout.
    expected; the mess evidence now arrives with the Top 40 weekly in
    milestone 10. Top 2000 first still stands — it proves the framework on
    the cheapest chart — but it no longer buys the ontology its evidence.
-8. **Song ontology and curation** third, designed against the observed mess
-   rather than the imagined one. *Open question for the user (2026-10-02):*
-   with the Top 2000 pre-curated at its source, whether to refine this
-   milestone after the Top 2000 ingestor as the graph encodes (#72 blocked
-   by #102), or to wait for a raw-published chart from milestone 10. The
-   graph stands until the user decides. `derived`.
+8. **Song ontology and curation** after a raw-published chart, designed
+   against the observed mess rather than the imagined one. *Reordered
+   (2026-10-02, `stated`):* with the Top 2000 pre-curated at its source,
+   the user chose to wait — refining this milestone is blocked by
+   milestone 10's refinement (#72 ← #74) rather than by the Top 2000
+   ingestor, and the edge moves to the Top 40 ingestor feature once that
+   refinement creates it. So milestone 10 is no longer last in full: its
+   first raw-published ingestor is pulled ahead of this milestone, while
+   its upkeep and remaining-coverage parts stay where they were. The
+   milestone numbers are names, not an order.
 9. **Matching beyond exact** after the ontology: fuzzy and interactive
    matching are only worth their complexity for the residue left after
    normalization plus aliases, and the earlier milestones' unmatched-track
@@ -458,9 +461,11 @@ remain. `derived`.
   for the Top 2000; the ordering argument's premise that the Top 2000
   supplies the ontology's "observed mess" is weakened (`derived`
   revision) — the Top 2000 proves the framework, the Top 40 supplies the
-  mess; the `stated` variant policy meets a source that drops qualifiers,
-  surfaced for the user rather than edited around; and the *curation
-  scale* unknown is marked as not answered by a pre-curated source. One
-  question raised for the user: whether milestone 8 is still refined
-  after the Top 2000 ingestor (the graph's current edge) or after a
-  raw-published chart. The ingestor contract (#99) shipped the same day.
+  mess; and the *curation scale* unknown is marked as not answered by a
+  pre-curated source. An agent reading that the source undermined the
+  `stated` variant policy was corrected by the user: Wikipedia keeps
+  explicit variants distinct and omits only the album-cut marker. User
+  decision (`stated`): milestone 8 is refined after a raw-published chart,
+  not after the Top 2000 ingestor — the graph edge on #72 repointed from
+  #102 to #74, and milestone 10's first ingestor is pulled ahead of
+  milestone 8. The ingestor contract (#99) shipped the same day.
