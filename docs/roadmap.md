@@ -102,7 +102,15 @@ from that dataset. `stated`.
 - **Variant policy.** An explicit version qualifier ("live", "remix", …)
   makes a distinct song; how strictly the beets side matches variants is
   user-configurable. `stated` (2026-08-04; originated as an agent proposal,
-  endorsed by the user).
+  endorsed by the user). *Checked against the Top 2000 source
+  (2026-10-02):* Wikipedia's table keeps explicit variants as distinct
+  songs — "(live)", "(unplugged)", "(akoestisch)" rows beside the studio
+  version — so the policy holds there; what it omits is "(Albumversie)",
+  the broadcaster's marker for which cut is played, not a distinct song.
+  The user notes a few live versions are merged on Wikipedia, though not
+  many. `stated` (correction of an agent over-reading; `evidenced`:
+  [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98),
+  correction comment).
 - **Raw data is disposable; curation is precious.** Acquired editions are
   re-acquirable at will; hand-curation (aliases, entry–song links, merges,
   splits) must survive full re-acquisition. `derived`.
@@ -148,9 +156,25 @@ throughout.
    the ontology before seeing real data would be guessing. Top 2000 first
    within the milestone: yearly snapshot, lowest churn. (The tagger project
    independently reached the same first-chart conclusion — corroboration,
-   not a dependency.)
-8. **Song ontology and curation** third, designed against the observed mess
-   rather than the imagined one.
+   not a dependency.) *Premise weakened (2026-10-02):* the only
+   terms-clean Top 2000 source is Wikipedia's editor-normalised table —
+   one harmonised spelling per song across every year, qualifiers dropped
+   (`evidenced`:
+   [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98)). The
+   Top 2000 will therefore *not* show the raw spelling mess this argument
+   expected; the mess evidence now arrives with the Top 40 weekly in
+   milestone 10. Top 2000 first still stands — it proves the framework on
+   the cheapest chart — but it no longer buys the ontology its evidence.
+8. **Song ontology and curation** after a raw-published chart, designed
+   against the observed mess rather than the imagined one. *Reordered
+   (2026-10-02, `stated`):* with the Top 2000 pre-curated at its source,
+   the user chose to wait — refining this milestone is blocked by
+   milestone 10's refinement (#72 ← #74) rather than by the Top 2000
+   ingestor, and the edge moves to the Top 40 ingestor feature once that
+   refinement creates it. So milestone 10 is no longer last in full: its
+   first raw-published ingestor is pulled ahead of this milestone, while
+   its upkeep and remaining-coverage parts stay where they were. The
+   milestone numbers are names, not an order.
 9. **Matching beyond exact** after the ontology: fuzzy and interactive
    matching are only worth their complexity for the residue left after
    normalization plus aliases, and the earlier milestones' unmatched-track
@@ -248,7 +272,18 @@ remain. `derived`.
   if the appetite runs out or no viable public source exists, *Top 2000
   first* is wrong and another chart leads the milestone — a change of
   direction to record here, not a request for more time. The Top 40 /
-  Top 100 half still waits on milestone 10's refinement.
+  Top 100 half still waits on milestone 10's refinement. *Resolved for the
+  Top 2000 (2026-10-02, well within the appetite):* Dutch Wikipedia's
+  consolidated table — every edition since 1999, complete, one fetch,
+  CC BY-SA, with a sanctioned access path. The official NPO site is ruled
+  out by its own terms, which prohibit automated retrieval; its
+  per-edition spreadsheet exists for the current edition only. Everything
+  third-party is a Wikipedia copy, a single year, or unsourced. Verdict,
+  entry shape, and the comparison against the official file are in the
+  issue (`evidenced`:
+  [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98)); the
+  direction consequences are recorded under *Variant policy* and the
+  ordering argument. *Top 2000 first* holds.
 - **Ingestor plug-in mechanism.** How a third party's ingestor is found —
   Python entry points, a config-pointed module path, or both — is a
   feature-level decision the user deliberately left to the contract
@@ -259,7 +294,11 @@ remain. `derived`.
 - **Curation scale.** How many entries need hand attention after automatic
   normalization — this decides how much curation tooling milestone 8 must
   carry. Resolved by: refining milestone 8 against milestone 7's real data.
-  `derived`.
+  `derived`. *Caution (2026-10-02):* the Top 2000's source is pre-curated
+  (one spelling per song, a handful of double A-sides in 27 years —
+  [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98)), so its
+  tidiness is evidence about that source, not about raw-published chart
+  data. This unknown is still open; a raw-published chart answers it.
 - **Residual miss-rate.** Whether fuzzy matching is needed at meaningful
   scale once exact-normalized lookup plus aliases exist; if the residue is
   tiny, milestone 9 shrinks — a possible change of direction, recorded here
@@ -415,3 +454,18 @@ remain. `derived`.
   designed against real acquired data — and refining milestone 10 (#74) is
   blocked by the ingestor contract (#99), which the Top 40 and Top 100
   ingestors will implement. No change to direction or ordering.
+- 2026-10-02 — research spike #98 (Top 2000 source viability) closed, well
+  within its half-day appetite. Verdict: Dutch Wikipedia's consolidated
+  table is the source; the official NPO site is excluded by its terms.
+  Consequences recorded above: the *source viability* unknown is resolved
+  for the Top 2000; the ordering argument's premise that the Top 2000
+  supplies the ontology's "observed mess" is weakened (`derived`
+  revision) — the Top 2000 proves the framework, the Top 40 supplies the
+  mess; and the *curation scale* unknown is marked as not answered by a
+  pre-curated source. An agent reading that the source undermined the
+  `stated` variant policy was corrected by the user: Wikipedia keeps
+  explicit variants distinct and omits only the album-cut marker. User
+  decision (`stated`): milestone 8 is refined after a raw-published chart,
+  not after the Top 2000 ingestor — the graph edge on #72 repointed from
+  #102 to #74, and milestone 10's first ingestor is pulled ahead of
+  milestone 8. The ingestor contract (#99) shipped the same day.
