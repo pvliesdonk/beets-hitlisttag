@@ -22,3 +22,8 @@ def test_beetsplug_stays_a_pep420_namespace():
     assert getattr(beetsplug, "__file__", None) is None, (
         "beetsplug must stay a PEP 420 namespace package (no __init__.py)"
     )
+
+
+def test_ingestors_is_a_subpackage():
+    pkg = importlib.import_module("beetsplug.hitlisttag.ingestors")
+    assert hasattr(pkg, "__path__"), "bundled ingestors must live in a package"

@@ -16,8 +16,12 @@ configured ``ingestor_dir``.
 
 from __future__ import annotations
 
+import importlib
+import logging
+import pkgutil
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
@@ -176,3 +180,88 @@ def acquire_edition(ingestor: Ingestor, ref: EditionRef) -> AcquiredEdition:
             f"when asked for {ref.axes!r}"
         )
     return edition
+
+
+BUNDLED_PACKAGE = "beetsplug.hitlisttag.ingestors"
+
+
+def _check_ingestor(obj: object) -> str | None:
+    """Why ``obj`` is not a usable ingestor, or None when it is."""
+    if obj is None:
+        return "no INGESTOR defined"
+    if isinstance(obj, type):
+        return "INGESTOR must be an instance, not a class"
+    chart = getattr(obj, "chart", None)
+    if not isinstance(chart, str) or not chart:
+        return "chart must be a non-empty string"
+    axes = getattr(obj, "axes", None)
+    if (
+        not isinstance(axes, tuple)
+        or not axes
+        or not all(isinstance(a, str) and a for a in axes)
+    ):
+        return "axes must be a non-empty tuple of non-empty strings"
+    for method in ("editions", "fetch"):
+        if not callable(getattr(obj, method, None)):
+            return f"{method} must be a callable"
+    return None
+
+
+def _validated(module: object, origin: str, log: logging.Logger) -> Ingestor | None:
+    ingestor = getattr(module, "INGESTOR", None)
+    problem = _check_ingestor(ingestor)
+    if problem is not None:
+        log.warning(f"ignoring ingestor {origin}: {problem}")
+        return None
+    return ingestor
+
+
+def _load_bundled(module_name: str, log: logging.Logger) -> Ingestor | None:
+    try:
+        module = importlib.import_module(module_name)
+    except Exception as err:  # a bundled module is this package's bug
+        log.warning(f"cannot load bundled ingestor {module_name}: {err!r}")
+        return None
+    return _validated(module, module_name, log)
+
+
+def _bundled_module_names() -> list[str]:
+    package = importlib.import_module(BUNDLED_PACKAGE)
+    return sorted(
+        f"{BUNDLED_PACKAGE}.{info.name}"
+        for info in pkgutil.iter_modules(package.__path__)
+    )
+
+
+def _claim(
+    found: dict[str, tuple[str, Ingestor]],
+    ingestor: Ingestor,
+    origin: str,
+    tier: str,
+) -> None:
+    """Register ``ingestor`` under its chart; a second claim at the same tier
+    is a DiscoveryError naming both origins."""
+    if ingestor.chart in found:
+        raise DiscoveryError(
+            f"chart {ingestor.chart!r} is claimed by two {tier} ingestors: "
+            f"{found[ingestor.chart][0]} and {origin}"
+        )
+    found[ingestor.chart] = (origin, ingestor)
+
+
+def discover_ingestors(
+    drop_in_dir: Path | None, *, log: logging.Logger
+) -> dict[str, Ingestor]:
+    """Every usable ingestor, keyed by chart name.
+
+    Bundled modules first, then scripts in ``drop_in_dir``; a drop-in
+    claiming a chart a bundled module also claims overrides it with a
+    logged notice. Unusable modules are warned about and skipped; two
+    claims at the same tier raise ``DiscoveryError``.
+    """
+    bundled: dict[str, tuple[str, Ingestor]] = {}
+    for module_name in _bundled_module_names():
+        ingestor = _load_bundled(module_name, log)
+        if ingestor is not None:
+            _claim(bundled, ingestor, module_name, "bundled")
+    return {chart: ingestor for chart, (_origin, ingestor) in bundled.items()}

@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import importlib
+import logging
+import sys
+from pathlib import Path
+
 import pytest
 
 from beetsplug.hitlisttag.ingest import (
     AcquiredEdition,
+    DiscoveryError,
     EditionRef,
     IngestError,
     Ingestor,
     RawEntry,
     RawSong,
+    _check_ingestor,
     acquire_edition,
+    discover_ingestors,
 )
 
 
@@ -185,3 +193,124 @@ class TestAcquireEdition:
 
         with pytest.raises(KeyError):
             acquire_edition(Buggy({}), EditionRef({"year": 2023}))
+
+
+log = logging.getLogger("test.ingest")
+
+VALID_SCRIPT = """
+from beetsplug.hitlisttag.ingest import AcquiredEdition, EditionRef, RawEntry, RawSong
+
+
+class _Ingestor:
+    chart = "{chart}"
+    axes = ("year",)
+
+    def editions(self):
+        return [EditionRef({{"year": 2001}})]
+
+    def fetch(self, ref):
+        return AcquiredEdition(
+            ref, 2, (RawEntry(1, (RawSong("Made Up", "Song {chart}"),)),)
+        )
+
+
+INGESTOR = _Ingestor()
+"""
+
+
+def _write_script(directory: Path, name: str, chart: str | None = None) -> Path:
+    """Write a valid ingestor script `name`.py claiming `chart` (default: name)."""
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{name}.py"
+    path.write_text(VALID_SCRIPT.format(chart=chart or name), encoding="utf-8")
+    return path
+
+
+class TestCheckIngestor:
+    def test_valid_object_passes(self):
+        assert _check_ingestor(_FakeIngestor({})) is None
+
+    def test_none_is_missing(self):
+        assert "no INGESTOR" in _check_ingestor(None)
+
+    def test_class_instead_of_instance_rejected(self):
+        # Review focus 2: INGESTOR = SomeClass looks valid until the first call.
+        problem = _check_ingestor(_FakeIngestor)
+        assert problem is not None and "instance" in problem
+
+    @pytest.mark.parametrize("chart", ["", None, 3])
+    def test_bad_chart_rejected(self, chart):
+        class Bad(_FakeIngestor):
+            pass
+
+        Bad.chart = chart
+        assert "chart" in _check_ingestor(Bad({}))
+
+    @pytest.mark.parametrize("axes", [(), "year", ["year"], ("year", ""), (1,)])
+    def test_bad_axes_rejected(self, axes):
+        class Bad(_FakeIngestor):
+            pass
+
+        Bad.axes = axes
+        assert "axes" in _check_ingestor(Bad({}))
+
+    @pytest.mark.parametrize("method", ["editions", "fetch"])
+    def test_missing_method_rejected(self, method):
+        class Bad(_FakeIngestor):
+            pass
+
+        setattr(Bad, method, None)
+        assert method in _check_ingestor(Bad({}))
+
+
+@pytest.fixture
+def bundled(tmp_path, monkeypatch):
+    """Point the bundled ingestors package at an empty temp directory.
+
+    Returns the directory; tests write modules into it to simulate bundled
+    ingestors without touching the source tree. Modules imported under the
+    package are dropped from sys.modules afterwards.
+    """
+    import beetsplug.hitlisttag.ingestors as pkg
+
+    bundled_dir = tmp_path / "bundled"
+    bundled_dir.mkdir()
+    monkeypatch.setattr(pkg, "__path__", [str(bundled_dir)])
+    importlib.invalidate_caches()
+    before = set(sys.modules)
+    yield bundled_dir
+    for name in set(sys.modules) - before:
+        if name.startswith("beetsplug.hitlisttag.ingestors."):
+            del sys.modules[name]
+
+
+class TestDiscoverBundled:
+    def test_empty_package_yields_nothing(self, bundled):
+        assert discover_ingestors(None, log=log) == {}
+
+    def test_bundled_module_discovered_by_chart(self, bundled):
+        _write_script(bundled, "fakechart")
+        found = discover_ingestors(None, log=log)
+        assert set(found) == {"fakechart"}
+        assert found["fakechart"].axes == ("year",)
+
+    def test_invalid_bundled_module_warned_and_skipped(self, bundled, caplog):
+        _write_script(bundled, "good")
+        (bundled / "bad.py").write_text("INGESTOR = None\n", encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            found = discover_ingestors(None, log=log)
+        assert set(found) == {"good"}
+        assert "ingestors.bad" in caplog.text and "no INGESTOR" in caplog.text
+
+    def test_bundled_module_raising_on_import_warned_and_skipped(self, bundled, caplog):
+        (bundled / "boom.py").write_text('raise RuntimeError("boom")\n')
+        with caplog.at_level(logging.WARNING):
+            found = discover_ingestors(None, log=log)
+        assert found == {}
+        assert "ingestors.boom" in caplog.text and "boom" in caplog.text
+
+    def test_two_bundled_modules_same_chart_is_error(self, bundled):
+        _write_script(bundled, "one", chart="dup")
+        _write_script(bundled, "two", chart="dup")
+        with pytest.raises(DiscoveryError, match="dup"):
+            discover_ingestors(None, log=log)
