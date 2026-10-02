@@ -16,8 +16,9 @@ configured ``ingestor_dir``.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 
 class IngestError(Exception):
@@ -132,3 +133,46 @@ class AcquiredEdition:
             if entry.position in seen:
                 raise ValueError(f"duplicate position {entry.position}")
             seen.add(entry.position)
+
+
+@runtime_checkable
+class Ingestor(Protocol):
+    """What an ingestor provides. Structural: no base class to inherit."""
+
+    chart: str
+    """Hitlist name; must match a ``hitlists`` config entry."""
+
+    axes: tuple[str, ...]
+    """Axis names in order, e.g. ``("year",)`` or ``("year", "week")``."""
+
+    def editions(self) -> Iterable[EditionRef]:
+        """Every edition that exists at the source. May be expensive;
+        the tool calls it once per run."""
+        ...
+
+    def fetch(self, ref: EditionRef) -> AcquiredEdition:
+        """One edition, whose ``ref`` equals the one asked for."""
+        ...
+
+
+def acquire_edition(ingestor: Ingestor, ref: EditionRef) -> AcquiredEdition:
+    """Fetch ``ref`` through ``ingestor``, enforcing the contract.
+
+    Callers use this rather than ``fetch`` directly so the checks cannot be
+    forgotten: the ref's axis names must be the ingestor's, and the edition
+    returned must be the one asked for. Either violation is an
+    ``IngestError``; an ``IngestError`` raised by ``fetch`` passes through,
+    and anything else propagates as a bug in the ingestor.
+    """
+    if set(ref.axes) != set(ingestor.axes):
+        raise IngestError(
+            f"ingestor for {ingestor.chart!r} declares axes {ingestor.axes!r} "
+            f"but edition ref has {sorted(ref.axes)!r}"
+        )
+    edition = ingestor.fetch(ref)
+    if edition.ref != ref:
+        raise IngestError(
+            f"ingestor for {ingestor.chart!r} returned edition {edition.ref.axes!r} "
+            f"when asked for {ref.axes!r}"
+        )
+    return edition

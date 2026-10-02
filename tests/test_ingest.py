@@ -7,8 +7,11 @@ import pytest
 from beetsplug.hitlisttag.ingest import (
     AcquiredEdition,
     EditionRef,
+    IngestError,
+    Ingestor,
     RawEntry,
     RawSong,
+    acquire_edition,
 )
 
 
@@ -121,3 +124,64 @@ class TestAcquiredEdition:
         # The dataset permits an edition with no entries; so does the contract.
         edition = AcquiredEdition(EditionRef({"year": 2023}), 3, ())
         assert edition.entries == ()
+
+
+class _FakeIngestor:
+    """Minimal in-test ingestor; `fetch` returns whatever `responses` holds."""
+
+    chart = "fakechart"
+    axes = ("year",)
+
+    def __init__(self, responses: dict[EditionRef, AcquiredEdition]) -> None:
+        self.responses = responses
+        self.fetched: list[EditionRef] = []
+
+    def editions(self):
+        return list(self.responses)
+
+    def fetch(self, ref: EditionRef) -> AcquiredEdition:
+        self.fetched.append(ref)
+        return self.responses[ref]
+
+
+class TestAcquireEdition:
+    def test_fake_satisfies_protocol(self):
+        assert isinstance(_FakeIngestor({}), Ingestor)
+
+    def test_returns_fetched_edition(self):
+        ref = EditionRef({"year": 2023})
+        edition = AcquiredEdition(ref, 3, (_entry(1),))
+        ingestor = _FakeIngestor({ref: edition})
+        assert acquire_edition(ingestor, ref) is edition
+        assert ingestor.fetched == [ref]
+
+    def test_rejects_edition_with_other_ref(self):
+        asked = EditionRef({"year": 2023})
+        got = AcquiredEdition(EditionRef({"year": 2024}), 3, (_entry(1),))
+        ingestor = _FakeIngestor({asked: got})
+        with pytest.raises(IngestError, match="fakechart.*2024.*2023"):
+            acquire_edition(ingestor, asked)
+
+    def test_rejects_ref_whose_axis_names_differ_from_ingestor_axes(self):
+        # Review focus 4: a ref for ("year", "week") against a ("year",) chart.
+        ref = EditionRef({"year": 2024, "week": 7})
+        ingestor = _FakeIngestor({ref: AcquiredEdition(ref, 3, ())})
+        with pytest.raises(IngestError, match="axes"):
+            acquire_edition(ingestor, ref)
+        assert ingestor.fetched == []  # refused before fetch
+
+    def test_ingest_error_from_fetch_propagates_unchanged(self):
+        class Failing(_FakeIngestor):
+            def fetch(self, ref):
+                raise IngestError("source unreachable")
+
+        with pytest.raises(IngestError, match="source unreachable"):
+            acquire_edition(Failing({}), EditionRef({"year": 2023}))
+
+    def test_other_exceptions_propagate(self):
+        class Buggy(_FakeIngestor):
+            def fetch(self, ref):
+                raise KeyError("bug in script")
+
+        with pytest.raises(KeyError):
+            acquire_edition(Buggy({}), EditionRef({"year": 2023}))
