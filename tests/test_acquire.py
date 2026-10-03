@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from beetsplug.hitlisttag import acquire as acquire_module
 from beetsplug.hitlisttag.acquire import ChartResult, acquire_chart, merge_acquired
 from beetsplug.hitlisttag.dataset import Edition, Entry, HitlistData, Song, read_dataset
 from beetsplug.hitlisttag.ingest import (
@@ -225,18 +226,18 @@ class TestAcquireChart:
         e2002 = next(e for e in data.editions if e.axes["year"] == 2002)
         assert [s.id for en in e2002.entries for s in en.songs] == ["1", "2"]
 
-    def test_ingest_error_leaves_file_unchanged(self, tmp_path):
+    def test_ingest_error_keeps_editions_before_it(self, tmp_path):
         path = tmp_path / "fake.json"
         acquire_chart(
             FakeIngestor({2001: [("A", "x")]}), ["year"], None, path, HITLISTS, log
         )
-        before = path.read_bytes()
         failing = FakeIngestor(
             {2001: [("A", "x")], 2002: [("B", "y")], 2003: [("C", "z")]}, fail_on=2003
         )
         result = acquire_chart(failing, ["year"], _read(tmp_path), path, HITLISTS, log)
-        assert result.error == "source broke on 2003"
-        assert path.read_bytes() == before
+        assert result.error is None
+        assert [ref.axes["year"] for ref, _ in result.failed] == [2003]
+        assert [e.axes["year"] for e in _read(tmp_path).editions] == [2001, 2002]
         assert sorted(p.name for p in tmp_path.iterdir()) == ["fake.json"]
 
     def test_contract_violation_reported(self, tmp_path):
@@ -247,7 +248,9 @@ class TestAcquireChart:
         result = acquire_chart(
             Broken({2001: []}), ["year"], None, tmp_path / "fake.json", HITLISTS, log
         )
-        assert result.error.startswith("ingestor for fake broke its contract:")
+        assert result.error is None
+        [(ref, reason)] = result.failed
+        assert reason.startswith("ingestor for fake broke its contract:")
         assert not (tmp_path / "fake.json").exists()
 
     def test_axes_mismatch_reported_without_fetch(self, tmp_path):
@@ -500,16 +503,6 @@ class TestForce:
         assert "lists no editions" in result.error
         assert path.read_bytes() == before
 
-    def test_force_failure_leaves_file_unchanged(self, tmp_path):
-        path = self._seed(tmp_path, {2001: [("A", "x")], 2002: [("B", "y")]})
-        before = path.read_bytes()
-        src = FakeIngestor({2001: [("A", "x")], 2002: [("B", "y")]}, fail_on=2002)
-        result = acquire_chart(
-            src, ["year"], _read(tmp_path), path, HITLISTS, log, force=True
-        )
-        assert result.error == "source broke on 2002"
-        assert path.read_bytes() == before
-
 
 class TestRefDeduplication:
     def test_dedup_does_not_compare_refs_pairwise(self, tmp_path):
@@ -612,6 +605,265 @@ class TestSourceIds:
         result = acquire_chart(
             IntIds({2001: []}), ["year"], None, tmp_path / "fake.json", HITLISTS, log
         )
-        assert result.error.startswith("ingestor for fake broke its contract:")
-        assert "source_ids" in result.error
+        assert result.error is None
+        [(_ref, reason)] = result.failed
+        assert reason.startswith("ingestor for fake broke its contract:")
+        assert "source_ids" in reason
         assert not (tmp_path / "fake.json").exists()
+
+
+class Scripted:
+    """An ingestor with a scripted outcome per year.
+
+    An outcome is (artist, title), "contract" (an edition breaking the
+    contract), or an exception instance to raise. ``on_fetch(year)`` runs
+    at the start of every fetch.
+    """
+
+    chart = "fake"
+    axes = ("year",)
+
+    def __init__(self, plan, on_fetch=None):
+        self.plan = plan
+        self.on_fetch = on_fetch
+        self.fetched: list[int] = []
+
+    def editions(self):
+        return [EditionRef({"year": year}) for year in self.plan]
+
+    def fetch(self, ref):
+        year = ref.axes["year"]
+        self.fetched.append(year)
+        if self.on_fetch is not None:
+            self.on_fetch(year)
+        outcome = self.plan[year]
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if outcome == "contract":
+            return AcquiredEdition(ref, 1, (RawEntry(2, (RawSong("A", "x"),)),))
+        return _acq(year, outcome)
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _years(root: Path) -> list[int]:
+    data = _read(root)
+    return [e.axes["year"] for e in data.editions] if data else []
+
+
+def _failed_years(result: ChartResult) -> list[int]:
+    return [ref.axes["year"] for ref, _reason in result.failed]
+
+
+class TestPartialProgress:
+    def test_failure_in_the_middle_keeps_the_others(self, tmp_path):
+        ing = Scripted({2001: ("A", "x"), 2002: IngestError("boom"), 2003: ("B", "y")})
+        result = acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.error is None
+        assert _years(tmp_path) == [2001, 2003]
+        assert [(ref.axes["year"], why) for ref, why in result.failed] == [
+            (2002, "boom")
+        ]
+        assert [ref.axes["year"] for ref in result.acquired] == [2001, 2003]
+        assert result.written is True
+
+    def test_a_later_plain_run_fetches_only_the_failed_edition(self, tmp_path):
+        path = tmp_path / "fake.json"
+        first = Scripted(
+            {2001: ("A", "x"), 2002: IngestError("boom"), 2003: ("B", "y")}
+        )
+        acquire_chart(first, ["year"], None, path, HITLISTS, log)
+        again = Scripted({2001: ("A", "x"), 2002: ("C", "z"), 2003: ("B", "y")})
+        result = acquire_chart(again, ["year"], _read(tmp_path), path, HITLISTS, log)
+        assert again.fetched == [2002]
+        assert result.failed == []
+        assert _years(tmp_path) == [2001, 2002, 2003]
+
+    def test_three_failures_in_a_row_stop_the_run(self, tmp_path):
+        plan = {
+            2000: IngestError("early"),
+            2001: ("A", "x"),
+            2002: IngestError("a"),
+            2003: IngestError("b"),
+            2004: IngestError("c"),
+            2005: ("B", "y"),
+            2006: ("C", "z"),
+        }
+        ing = Scripted(plan)
+        result = acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.stopped is True
+        assert result.not_attempted == 2
+        assert ing.fetched == [2000, 2001, 2002, 2003, 2004]
+        assert _years(tmp_path) == [2001]
+        assert _failed_years(result) == [2000, 2002, 2003, 2004]
+
+    def test_a_success_resets_the_count(self, tmp_path):
+        plan = {
+            2001: IngestError("a"),
+            2002: IngestError("b"),
+            2003: ("A", "x"),
+            2004: IngestError("c"),
+            2005: IngestError("d"),
+            2006: ("B", "y"),
+        }
+        result = acquire_chart(
+            Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.stopped is False
+        assert _years(tmp_path) == [2003, 2006]
+
+    def test_contract_violation_is_one_failed_edition(self, tmp_path):
+        plan = {2001: "contract", 2002: ("A", "x")}
+        result = acquire_chart(
+            Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        [(ref, reason)] = result.failed
+        assert ref.axes["year"] == 2001
+        assert reason.startswith("ingestor for fake broke its contract:")
+        assert _years(tmp_path) == [2002]
+
+    def test_ctrl_c_saves_what_was_acquired(self, tmp_path):
+        plan = {2001: ("A", "x"), 2002: KeyboardInterrupt()}
+        with pytest.raises(KeyboardInterrupt):
+            acquire_chart(
+                Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+            )
+        assert _years(tmp_path) == [2001]
+
+    def test_ingestor_bug_saves_then_propagates(self, tmp_path):
+        plan = {2001: ("A", "x"), 2002: RuntimeError("bug")}
+        with pytest.raises(RuntimeError, match="bug"):
+            acquire_chart(
+                Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+            )
+        assert _years(tmp_path) == [2001]
+
+    def test_interrupt_before_anything_acquired_writes_nothing(self, tmp_path):
+        with pytest.raises(KeyboardInterrupt):
+            acquire_chart(
+                Scripted({2001: KeyboardInterrupt()}),
+                ["year"],
+                None,
+                tmp_path / "fake.json",
+                HITLISTS,
+                log,
+            )
+        assert list(tmp_path.iterdir()) == []
+
+    def test_checkpoint_writes_during_the_run(self, tmp_path):
+        clock = FakeClock()
+        seen: dict[int, list[int]] = {}
+
+        def on_fetch(year):
+            seen[year] = _years(tmp_path)
+            clock.now += 40
+
+        ing = Scripted(
+            {2001: ("A", "x"), 2002: ("B", "y"), 2003: ("C", "z")}, on_fetch=on_fetch
+        )
+        acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log, clock=clock
+        )
+        # 2001 at t=40 (no write), 2002 at t=80 (checkpoint), 2003 sees it.
+        assert seen == {2001: [], 2002: [], 2003: [2001, 2002]}
+        assert _years(tmp_path) == [2001, 2002, 2003]
+
+    def test_failed_checkpoint_write_keeps_the_last_good_state(
+        self, tmp_path, monkeypatch
+    ):
+        path = tmp_path / "fake.json"
+        clock = FakeClock()
+        real_write = acquire_module.write_dataset_file
+        calls: list[int] = []
+
+        def flaky(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real_write(*args, **kwargs)
+
+        def tick(year):
+            clock.now += 60
+
+        monkeypatch.setattr(acquire_module, "write_dataset_file", flaky)
+        ing = Scripted(
+            {2001: ("A", "x"), 2002: ("B", "y"), 2003: ("C", "z"), 2004: ("D", "w")},
+            on_fetch=tick,
+        )
+        result = acquire_chart(ing, ["year"], None, path, HITLISTS, log, clock=clock)
+        assert result.error == f"cannot write {path}: disk full"
+        assert ing.fetched == [2001, 2002]
+        assert _years(tmp_path) == [2001]
+        assert result.written is True
+        assert [ref.axes["year"] for ref in result.acquired] == [2001]
+
+    def test_force_failure_keeps_the_old_version(self, tmp_path):
+        path = tmp_path / "fake.json"
+        acquire_chart(
+            Scripted({2001: ("A", "x"), 2002: ("B", "y")}),
+            ["year"],
+            None,
+            path,
+            HITLISTS,
+            log,
+        )
+        ing = Scripted({2001: ("A2", "x2"), 2002: IngestError("boom")})
+        result = acquire_chart(
+            ing, ["year"], _read(tmp_path), path, HITLISTS, log, force=True
+        )
+        data = _read(tmp_path)
+        titles = {e.axes["year"]: e.entries[0].songs[0].title for e in data.editions}
+        assert titles == {2001: "x2", 2002: "y"}
+        assert _failed_years(result) == [2002]
+
+    def test_prune_when_every_fetch_fails(self, tmp_path):
+        path = tmp_path / "fake.json"
+        acquire_chart(
+            Scripted({2000: ("Z", "q"), 2001: ("A", "x"), 2002: ("B", "y")}),
+            ["year"],
+            None,
+            path,
+            HITLISTS,
+            log,
+        )
+        ing = Scripted({2001: IngestError("a"), 2002: IngestError("b")})
+        result = acquire_chart(
+            ing, ["year"], _read(tmp_path), path, HITLISTS, log, force=True, prune=True
+        )
+        assert _years(tmp_path) == [2001, 2002]
+        assert result.pruned == [(2000,)]
+        assert _failed_years(result) == [2001, 2002]
+
+    def test_song_ids_across_checkpoints_match_a_single_write(self, tmp_path):
+        plan = {2001: ("A", "x"), 2002: ("B", "y"), 2003: ("A", "x"), 2004: ("C", "z")}
+        one, many = tmp_path / "one", tmp_path / "many"
+        one.mkdir()
+        many.mkdir()
+        acquire_chart(Scripted(plan), ["year"], None, one / "fake.json", HITLISTS, log)
+        clock = FakeClock()
+
+        def tick(year):
+            clock.now += 60
+
+        acquire_chart(
+            Scripted(plan, on_fetch=tick),
+            ["year"],
+            None,
+            many / "fake.json",
+            HITLISTS,
+            log,
+            clock=clock,
+        )
+        assert (one / "fake.json").read_text("utf-8") == (many / "fake.json").read_text(
+            "utf-8"
+        )
