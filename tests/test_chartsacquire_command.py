@@ -276,3 +276,50 @@ class TestForceFlags:
             env.plugin.acquire(
                 env.helper.lib, SimpleNamespace(force=False, prune=True), ["fake"]
             )
+
+
+IDS_SCRIPT = """
+from beetsplug.hitlisttag.ingest import AcquiredEdition, EditionRef, RawEntry, RawSong
+
+
+class WithIds:
+    chart = "fake"
+    axes = ("year",)
+
+    def editions(self):
+        return [EditionRef({"year": 2001})]
+
+    def fetch(self, ref):
+        ids = {"top40.nl/title": "8522", "top40.nl/version": "7417"}
+        return AcquiredEdition(
+            ref,
+            2,
+            (
+                RawEntry(1, (RawSong("A", "x"),), ids),
+                RawEntry(2, (RawSong("B", "y"),)),
+            ),
+        )
+
+
+INGESTOR = WithIds()
+"""
+
+
+class TestSourceIds:
+    def test_ingestor_ids_reach_the_file_and_a_rerun_leaves_it(self, env):
+        env.ingestors.mkdir(parents=True, exist_ok=True)
+        (env.ingestors / "with_ids.py").write_text(IDS_SCRIPT, encoding="utf-8")
+        _run(env, "fake")
+        path = env.data / "fake.json"
+        first, second = json.loads(path.read_text(encoding="utf-8"))["editions"][0][
+            "entries"
+        ]
+        assert first["source_ids"] == {
+            "top40.nl/title": "8522",
+            "top40.nl/version": "7417",
+        }
+        assert "source_ids" not in second
+        before, mtime = path.read_bytes(), path.stat().st_mtime_ns
+        _run(env, "fake")
+        assert path.read_bytes() == before
+        assert path.stat().st_mtime_ns == mtime

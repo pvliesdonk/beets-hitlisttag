@@ -532,3 +532,86 @@ class TestRefDeduplication:
             Many(years), ["year"], None, tmp_path / "fake.json", HITLISTS, log
         )
         assert len(comparisons) < 2000  # n = 400; pairwise would be ~80,000
+
+
+def _acq_ids(year: int, *rows: tuple[str, str, dict], size: int | None = None):
+    entries = tuple(
+        RawEntry(i + 1, (RawSong(artist, title),), ids)
+        for i, (artist, title, ids) in enumerate(rows)
+    )
+    return AcquiredEdition(EditionRef({"year": year}), size or len(rows), entries)
+
+
+def _entries(data: HitlistData, year: int):
+    return next(e for e in data.editions if e.axes["year"] == year).entries
+
+
+class TestSourceIds:
+    def test_ids_land_on_stored_entries(self):
+        acquired = _acq_ids(2001, ("A", "x", {"s/title": "1"}), ("B", "y", {}))
+        data, _ = merge_acquired(None, "fake", ["year"], [acquired], SRC, log)
+        assert [e.source_ids for e in _entries(data, 2001)] == [{"s/title": "1"}, {}]
+        assert type(_entries(data, 2001)[0].source_ids) is dict
+
+    def test_ids_never_change_song_resolution(self):
+        data, _ = merge_acquired(
+            None,
+            "fake",
+            ["year"],
+            [
+                _acq_ids(2001, ("A", "x", {"s/title": "1"})),
+                _acq_ids(
+                    2002, ("A", "x", {"s/title": "2"}), ("B", "y", {"s/title": "1"})
+                ),
+            ],
+            SRC,
+            log,
+        )
+        assert _ids(data, 2001) == ["1"]  # same name, different id: same song
+        assert _ids(data, 2002) == ["1", "2"]  # same id, different name: new song
+
+    def test_existing_editions_keep_their_entries(self):
+        song = Song("1", "A", "x")
+        existing = _existing(
+            {"1": ("A", "x")},
+            [Edition({"year": 2000}, 1, [Entry(1, [song], {"s/title": "9"})])],
+        )
+        acquired = _acq_ids(2001, ("A", "x", {"s/title": "1"}))
+        data, _ = merge_acquired(existing, "fake", ["year"], [acquired], SRC, log)
+        assert _entries(data, 2000)[0].source_ids == {"s/title": "9"}
+
+    def test_replace_takes_the_new_ids(self):
+        song = Song("1", "A", "x")
+        existing = _existing(
+            {"1": ("A", "x")},
+            [Edition({"year": 2001}, 1, [Entry(1, [song], {"s/title": "old"})])],
+        )
+        acquired = _acq_ids(2001, ("A", "x", {"s/title": "new"}))
+        data, _ = merge_acquired(
+            existing, "fake", ["year"], [acquired], SRC, log, replace=True
+        )
+        assert _entries(data, 2001)[0].source_ids == {"s/title": "new"}
+
+    def test_multi_song_entry_keeps_one_set_of_ids(self):
+        acquired = AcquiredEdition(
+            EditionRef({"year": 2001}),
+            1,
+            (RawEntry(1, (RawSong("A", "x"), RawSong("B", "y")), {"s/title": "7"}),),
+        )
+        data, _ = merge_acquired(None, "fake", ["year"], [acquired], SRC, log)
+        [entry] = _entries(data, 2001)
+        assert [s.id for s in entry.songs] == ["1", "2"]
+        assert entry.source_ids == {"s/title": "7"}
+
+    def test_integer_ids_are_a_contract_violation(self, tmp_path):
+        class IntIds(FakeIngestor):
+            def fetch(self, ref):
+                entry = RawEntry(1, (RawSong("A", "x"),), {"top40.nl/title": 8522})
+                return AcquiredEdition(ref, 1, (entry,))
+
+        result = acquire_chart(
+            IntIds({2001: []}), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.error.startswith("ingestor for fake broke its contract:")
+        assert "source_ids" in result.error
+        assert not (tmp_path / "fake.json").exists()

@@ -61,6 +61,8 @@ def merge_acquired(
     otherwise a new id continues the file's numeric sequence. Within one
     edition an id never repeats: a second entry resolving to the same key gets
     its own id. Editions are sorted by configured axis order, songs by id.
+    Each entry keeps the source_ids its RawEntry carried; they play no part
+    in reusing or minting song ids.
     """
     songs: dict[str, Song] = dict(existing.songs) if existing else {}
     editions: list[Edition] = list(existing.editions) if existing else []
@@ -106,7 +108,7 @@ def merge_acquired(
                         index[key] = sid
                 used.add(sid)
                 resolved.append(songs[sid])
-            entries.append(Entry(raw.position, resolved))
+            entries.append(Entry(raw.position, resolved, dict(raw.source_ids)))
         axes = {name: edition.ref.axes[name] for name in axis_names}
         editions.append(Edition(axes, edition.size, entries))
 
