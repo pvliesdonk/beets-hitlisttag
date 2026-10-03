@@ -93,3 +93,64 @@ class TestParseList:
             '<a href="#" class="p lead lowercase">A</a></div>'
         )
         assert top40nl.parse_list(html) == [top40nl.ListItem(5, "T", "A", None, None)]
+
+
+def _one(img: str) -> top40nl.ListItem:
+    html = (
+        f'<div class="top40-list__item">{img}'
+        '<div class="number-block"><h4>1</h4></div>'
+        '<a href="https://www.top40.nl/a/b-7" class="h3">T</a>'
+        '<a href="#" class="p lead lowercase">A</a></div>'
+    )
+    [item] = top40nl.parse_list(html)
+    return item
+
+
+class TestImageTitle:
+    def test_details_prefix_removed(self):
+        img = '<img src="x/uploads/subtitle/7_8/o.jpg" title="Details Artist - Song"/>'
+        assert _one(img).image_title == "Artist - Song"
+
+    def test_entities_and_whitespace(self):
+        img = '<img src="x" title="Details  Rock &amp; Roll\n  Band - Song"/>'
+        assert _one(img).image_title == "Rock & Roll Band - Song"
+
+    def test_details_alone_is_none(self):
+        assert _one('<img src="x" title="Details"/>').image_title is None
+
+    def test_other_title_kept_as_is(self):
+        assert _one('<img src="x" title="Artist - Song"/>').image_title == (
+            "Artist - Song"
+        )
+
+    def test_no_image_or_no_title_is_none(self):
+        assert _one("").image_title is None
+        assert _one('<img src="x"/>').image_title is None
+
+    def test_first_image_counts_even_without_subtitle(self):
+        img = (
+            '<img src="x/uploads/title/7/o.jpg" title="Details A - T"/>'
+            '<img src="x/uploads/subtitle/9/o.jpg" title="Details Other"/>'
+        )
+        item = _one(img)
+        assert item.image_title == "A - T"
+        assert item.subtitle == "9"
+
+    def test_fixture_items_have_no_image_title(self):
+        assert all(i.image_title is None for i in _items("year-layout.html"))
+        assert all(i.image_title is None for i in _items("week-layout.html"))
+
+
+class TestPositionProblems:
+    def test_complete(self):
+        assert top40nl.position_problems(range(1, 41), 40) == ""
+
+    def test_missing_duplicated_and_outside(self):
+        positions = [p for p in range(1, 41) if p not in (7, 8, 30)] + [12, 41]
+        assert top40nl.position_problems(positions, 40) == (
+            "missing positions 7–8, 30; duplicated positions 12; "
+            "positions outside 1–40: 41"
+        )
+
+    def test_empty(self):
+        assert top40nl.position_problems([], 100) == "missing positions 1–100"

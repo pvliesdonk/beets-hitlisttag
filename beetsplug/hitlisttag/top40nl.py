@@ -15,6 +15,7 @@ ingestor decides what a usable edition is.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
@@ -84,6 +85,8 @@ class ListItem:
     ``title`` and ``artist`` are "" when absent. ``title_id`` is the
     trailing number of the title link; ``subtitle`` the raw value of the
     item image's ``uploads/subtitle/<id>/`` path, when there is one.
+    ``image_title`` is the item image's ``title`` attribute without its
+    ``Details `` prefix, when it has one.
     """
 
     position: int | None
@@ -91,6 +94,7 @@ class ListItem:
     artist: str
     title_id: str | None
     subtitle: str | None
+    image_title: str | None = None
 
 
 def _classes(attrs: list[tuple[str, str | None]]) -> list[str]:
@@ -102,6 +106,16 @@ def _classes(attrs: list[tuple[str, str | None]]) -> list[str]:
 
 def _clean(text: str) -> str:
     return _SPACES.sub(" ", text).strip()
+
+
+def _image_title(value: str | None) -> str | None:
+    """An item image's title without the site's "Details " prefix; None if empty."""
+    text = _clean(value or "")
+    if text == "Details":
+        return None
+    if text.startswith("Details "):
+        text = text[len("Details ") :]
+    return text or None
 
 
 class _ListParser(HTMLParser):
@@ -120,7 +134,13 @@ class _ListParser(HTMLParser):
         classes = _classes(attrs)
         if self._item is None:
             if tag == "div" and "top40-list__item" in classes:
-                self._item = {"title_id": None, "subtitle": None, "text": {}}
+                self._item = {
+                    "title_id": None,
+                    "subtitle": None,
+                    "image_title": None,
+                    "img": False,
+                    "text": {},
+                }
                 self._depth = 1
             return
         if tag == "div":
@@ -130,10 +150,15 @@ class _ListParser(HTMLParser):
                 self._field_depth += 1
             return
         item = self._item
-        if tag == "img" and item["subtitle"] is None:
-            match = _SUBTITLE.search(dict(attrs).get("src") or "")
-            if match:
-                item["subtitle"] = match.group(1)
+        if tag == "img":
+            values = dict(attrs)
+            if not item["img"]:
+                item["img"] = True
+                item["image_title"] = _image_title(values.get("title"))
+            if item["subtitle"] is None:
+                match = _SUBTITLE.search(values.get("src") or "")
+                if match:
+                    item["subtitle"] = match.group(1)
         elif "number-block" in classes and "position" not in item["text"]:
             self._open("position", tag)
         elif tag == "a" and "h3" in classes and "title" not in item["text"]:
@@ -174,6 +199,7 @@ class _ListParser(HTMLParser):
                 artist=text.get("artist", ""),
                 title_id=item["title_id"],
                 subtitle=item["subtitle"],
+                image_title=item["image_title"],
             )
         )
 
@@ -184,3 +210,37 @@ def parse_list(html: str) -> list[ListItem]:
     parser.feed(html)
     parser.close()
     return parser.items
+
+
+def _ranges(values: Sequence[int]) -> str:
+    """Sorted integers as compact ranges: [1, 2, 3, 7] -> "1–3, 7"."""
+    parts: list[str] = []
+    start = previous = None
+    for value in values:
+        if start is not None and value == previous + 1:
+            previous = value
+            continue
+        if start is not None:
+            parts.append(str(start) if start == previous else f"{start}–{previous}")
+        start = previous = value
+    if start is not None:
+        parts.append(str(start) if start == previous else f"{start}–{previous}")
+    return ", ".join(parts)
+
+
+def position_problems(positions: Sequence[int], size: int) -> str:
+    """Why ``positions`` is not exactly 1..size, each once; "" when it is."""
+    seen: set[int] = set()
+    duplicated: set[int] = set()
+    for position in positions:
+        (duplicated if position in seen else seen).add(position)
+    problems = []
+    missing = sorted(set(range(1, size + 1)) - seen)
+    outside = sorted(p for p in seen if not 1 <= p <= size)
+    if missing:
+        problems.append(f"missing positions {_ranges(missing)}")
+    if duplicated:
+        problems.append(f"duplicated positions {_ranges(sorted(duplicated))}")
+    if outside:
+        problems.append(f"positions outside 1–{size}: {_ranges(outside)}")
+    return "; ".join(problems)
