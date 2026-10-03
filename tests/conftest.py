@@ -105,3 +105,9 @@ def _idempotent_media_field():
 def rsrc_dir() -> Path:
     """Directory holding the committed audio test fixtures."""
     return RSRC
+
+
+@pytest.fixture(autouse=True)
+def _no_dev_http_cache(monkeypatch):
+    """Keep a developer's exported HITLISTTAG_HTTP_CACHE out of the tests."""
+    monkeypatch.delenv("HITLISTTAG_HTTP_CACHE", raising=False)
