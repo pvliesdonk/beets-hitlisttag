@@ -147,7 +147,7 @@ from that dataset. `stated`.
   treated like a double or triple A-side: each version gets the
   position. `stated` (2026-10-03); the owner notes other chart
   followers may not agree, so this is one more reading the beets-side
-  matching could make configurable.
+  matching could make configurable (`derived`).
 - **Raw data is disposable; curation is precious.** Acquired editions are
   re-acquirable at will; hand-curation (aliases, entry–song links, merges,
   splits) must survive full re-acquisition. `derived`.
