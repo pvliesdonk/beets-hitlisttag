@@ -133,7 +133,7 @@ from that dataset. `stated`.
 
 ## Milestones and order
 
-Milestones 1–5 (the first roadmap) and milestone 6 are delivered; see
+Milestones 1–5 (the first roadmap), 6 and 7 are delivered; see
 History. Milestones (each holds its acceptance criterion in its GitHub
 description):
 
@@ -171,6 +171,11 @@ throughout.
    expected; the mess evidence now arrives with the Top 40 weekly in
    milestone 10. Top 2000 first still stands — it proves the framework on
    the cheapest chart — but it no longer buys the ontology its evidence.
+   *Delivered 2026-10-03.* The framework bet paid: a third-party
+   ingestor needs no change to the package, and the Top 2000 acquires
+   live from its public source in under two seconds (`evidenced`:
+   `tests/test_acquisition_acceptance.py`; History). The ontology
+   evidence did not come with it, as the 2026-10-02 revision expected.
 8. **Song ontology and curation** after a raw-published chart, designed
    against the observed mess rather than the imagined one. *Reordered
    (2026-10-02, `stated`):* with the Top 2000 pre-curated at its source,
@@ -305,6 +310,9 @@ remain. `derived`.
   [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98)), so its
   tidiness is evidence about that source, not about raw-published chart
   data. This unknown is still open; a raw-published chart answers it.
+  Resolved by: refining milestone 10 (#74), whose first raw-published
+  ingestor feeds milestone 8's refinement. The owner's candidate source
+  for it, the top40.nl Top 100 year lists, is noted on #74.
 - **Residual miss-rate.** Whether fuzzy matching is needed at meaningful
   scale once exact-normalized lookup plus aliases exist; if the residue is
   tiny, milestone 9 shrinks — a possible change of direction, recorded here
@@ -481,3 +489,42 @@ remain. `derived`.
   acquires only missing editions from the first release, and writes are
   all-or-nothing per chart (temp file, re-read with the real reader,
   atomic replace) — the milestone 6 failure-state lesson decided up front.
+- 2026-10-03 — **milestone 7 (acquisition framework) completed.** All
+  eight issues closed: the Top 2000 source spike (#98), the ingestor
+  contract (#99), `chartsacquire` (#100), `--force`/`--prune` (#101), the
+  Top 2000 ingestor (#102), documentation and the ingestor-author guide
+  (#103), the acceptance pin (#104), and the refinement issue (#71). As
+  for milestone 6, the criterion was checked clause by clause rather than
+  read off an empty issue list:
+  - *populate and refresh at least one real chart from its public source
+    by running the bundled tool* — a live `beet chartsacquire top2000`
+    against Wikipedia wrote 27 editions (1999–2025) and 4,925 songs in
+    about 1.7 s; the 2025 top three match the broadcaster's own 2025 file
+    from the #98 spike (`evidenced`: closeout run recorded on the PR that
+    adds this entry);
+  - *re-running acquires only what is missing* — a live second run
+    reported "up to date" and left the file's mtime unchanged; offline,
+    `tests/test_acquisition_acceptance.py::TestAcceptance::test_rerun_acquires_only_what_is_missing`,
+    shown to fail when a plain run re-fetches;
+  - *a third party can add a new chart without modifying this package* —
+    `::test_third_party_ingestor_needs_no_package_change` and
+    `::test_bundled_tool_populates_dataset_through_to_tags`, which run a
+    drop-in ingestor through `chartsacquire`, `chartsgen` and
+    `chartsupdate`; the guide's example ingestor was run as published;
+  - *the package ships no chart data* — `::test_package_ships_no_chart_data`
+    together with `scripts/check_dist.py` in CI (#87), which proves the
+    wheel holds exactly the tracked `beetsplug/` Python files.
+- 2026-10-03 — **method finding from milestone 7.** Every feature PR went
+  through a fresh-context whole-branch review before push, and three of
+  them found defects that their own test suites passed: the Top 2000
+  parser failed outright on the real page (two template forms the spike
+  never exercised, because the spike counted positions and never checked
+  names); `chartsacquire` could silently overwrite a file holding a
+  different chart or drop fields it did not know; and an ingestor's
+  network error was reported as a write failure. All were caught against
+  real or adversarial input rather than the plan's own fixtures. The
+  standing lesson for later milestones: a review that runs the code
+  against real data finds what fixtures designed alongside the code do
+  not. Four minor findings remain, tracked in #114. Next on the graph:
+  refining milestone 10 (#74), which milestone 8's refinement now waits
+  on. `derived`.
