@@ -154,6 +154,11 @@ directories are not followed). Each file declares:
   release crediting more than one song (a double A-side) lists them all
   at its single rank. Positions and songs are each unique within an
   edition.
+- An entry may also carry `source_ids`: the identifiers the chart's source
+  publishes for it, such as `{"top40.nl/title": "8522"}`. They are raw
+  information kept for later curation and do not affect matching.
+  `chartsacquire` writes them when an ingestor provides them; hand-authored
+  files can leave them out.
 
 ```json
 {

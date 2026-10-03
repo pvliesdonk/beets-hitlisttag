@@ -390,3 +390,42 @@ def test_dataset_dir_property_resolves_and_defaults_to_none():
         resolved = plugin.dataset_dir
         assert isinstance(resolved, Path)
         assert resolved == Path("/tmp/charts")
+
+
+def test_source_ids_read_into_entry(tmp_path):
+    obj = _valid_top40()
+    obj["editions"][0]["entries"][0]["source_ids"] = {"top40.nl/title": "8522"}
+    [data] = _write(tmp_path, obj)
+    assert data.editions[0].entries[0].source_ids == {"top40.nl/title": "8522"}
+
+
+def test_absent_source_ids_read_as_empty(tmp_path):
+    [data] = _write(tmp_path, _valid_top40())
+    assert data.editions[0].entries[0].source_ids == {}
+
+
+def test_empty_source_ids_object_reads_as_empty(tmp_path):
+    obj = _valid_top40()
+    obj["editions"][0]["entries"][0]["source_ids"] = {}
+    [data] = _write(tmp_path, obj)
+    assert data.editions[0].entries[0].source_ids == {}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ["top40.nl/title", "1"],
+        "8522",
+        {"": "1"},
+        {"  ": "1"},
+        {"k": ""},
+        {"k": " "},
+        {"k": 8522},
+        {"k": None},
+    ],
+)
+def test_bad_source_ids_rejected(tmp_path, bad):
+    obj = _valid_top40()
+    obj["editions"][0]["entries"][0]["source_ids"] = bad
+    with pytest.raises(DatasetError, match=r"top40\.json.*position 1.*source_ids"):
+        _write(tmp_path, obj)

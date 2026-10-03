@@ -24,7 +24,7 @@ import pkgutil
 import stat
 import sys
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
@@ -49,6 +49,29 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+class _ReadOnlyDict(dict):
+    """A dict that refuses changes.
+
+    Used for ``RawEntry.source_ids`` instead of a ``MappingProxyType``, which
+    cannot be pickled or deep-copied: an ingestor may parse pages in a
+    process pool or cache its entries, and a ``RawEntry`` must survive that.
+    """
+
+    def _refuse(self, *args, **kwargs):
+        raise TypeError("source_ids is read-only")
+
+    __setitem__ = __delitem__ = __ior__ = _refuse
+    clear = pop = popitem = setdefault = update = _refuse
+
+    def __reduce__(self):
+        return (_ReadOnlyDict, (dict(self),))
+
+
+def _is_text(value: object) -> bool:
+    """True for a string with something other than whitespace in it."""
+    return isinstance(value, str) and bool(value.strip())
+
+
 @dataclass(frozen=True)
 class RawSong:
     """One credited song, exactly as published."""
@@ -70,10 +93,16 @@ class RawEntry:
     More than one song only when the source itself lists them separately;
     an ingestor never splits an "A / B" title -- song resolution is the
     ontology's job.
+
+    ``source_ids`` holds the identifiers the source publishes for this
+    entry, raw, keyed ``<source>/<kind>`` (``{"top40.nl/title": "8522"}``).
+    Optional; the framework stores them and never interprets them, so they
+    never change which song an entry resolves to.
     """
 
     position: int
     songs: tuple[RawSong, ...]
+    source_ids: Mapping[str, str] = field(default_factory=dict, hash=False)
 
     def __post_init__(self) -> None:
         if not _is_int(self.position) or self.position < 1:
@@ -86,6 +115,20 @@ class RawEntry:
         object.__setattr__(self, "songs", tuple(self.songs))
         if not self.songs:
             raise ValueError(f"entry at position {self.position} must have songs")
+        # Copy first, then validate the copy, so a mapping that changes
+        # between reads cannot slip past the check; the copy is read-only.
+        ids = (
+            _ReadOnlyDict(self.source_ids)
+            if isinstance(self.source_ids, Mapping)
+            else None
+        )
+        if ids is None or not all(
+            _is_text(key) and _is_text(value) for key, value in ids.items()
+        ):
+            raise ValueError(
+                "source_ids must map non-empty strings to non-empty strings"
+            )
+        object.__setattr__(self, "source_ids", ids)
 
 
 @dataclass(frozen=True, eq=False)

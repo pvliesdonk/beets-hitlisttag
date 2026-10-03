@@ -15,6 +15,11 @@ JSON file per hitlist. Each file declares:
   song -- a double A-side or an early multi-song single -- lists them all;
   positions stay unique within an edition, and so do songs -- a song id may
   appear at most once per edition.
+  An entry may also carry ``source_ids``: an object mapping non-empty strings
+  to non-empty strings, the identifiers the source publishes for that entry,
+  keyed ``<source>/<kind>`` (``{"top40.nl/title": "8522"}``). It is raw
+  information for later curation and never affects how entries resolve to
+  songs; it is written only when non-empty.
 
 Files hold raw acquired data only: disposable and re-acquirable. Discovery is
 recursive; only lowercase ``*.json`` files are read; unreadable directories are
@@ -29,7 +34,7 @@ import os
 import stat
 import tempfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeGuard
 
@@ -49,6 +54,7 @@ class Song:
 class Entry:
     position: int
     songs: list[Song]
+    source_ids: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.songs:
@@ -251,8 +257,27 @@ def _parse_entries(
                     f"unknown song {sid!r}"
                 )
             resolved.append(songs[sid])
-        entries.append(Entry(position=pos, songs=resolved))
+        source_ids = _parse_source_ids(entry, path, axes, pos)
+        entries.append(Entry(position=pos, songs=resolved, source_ids=source_ids))
     return entries
+
+
+def _parse_source_ids(
+    entry: dict, path: Path, axes: dict[str, int], pos: int
+) -> dict[str, str]:
+    raw = entry.get("source_ids", {})
+    if not isinstance(raw, dict) or not all(
+        isinstance(key, str)
+        and key.strip()
+        and isinstance(value, str)
+        and value.strip()
+        for key, value in raw.items()
+    ):
+        raise DatasetError(
+            f"{path}: edition {axes} entry at position {pos} 'source_ids' must "
+            "map non-empty strings to non-empty strings"
+        )
+    return dict(raw)
 
 
 def _is_numeric_id(song_id: str) -> bool:
@@ -266,6 +291,14 @@ def _id_sort_key(song_id: str) -> tuple[int, int, str]:
     if _is_numeric_id(song_id):
         return (0, int(song_id), "")
     return (1, 0, song_id)
+
+
+def _dump_entry(entry: Entry) -> dict:
+    """An entry's on-disk object; ``source_ids`` only when there are any."""
+    out: dict = {"position": entry.position, "songs": [s.id for s in entry.songs]}
+    if entry.source_ids:
+        out["source_ids"] = dict(sorted(entry.source_ids.items()))
+    return out
 
 
 def dump_dataset(data: HitlistData) -> str:
@@ -288,7 +321,7 @@ def dump_dataset(data: HitlistData) -> str:
                 "axes": dict(edition.axes),
                 "size": edition.size,
                 "entries": [
-                    {"position": entry.position, "songs": [s.id for s in entry.songs]}
+                    _dump_entry(entry)
                     for entry in sorted(edition.entries, key=lambda e: e.position)
                 ],
             }
@@ -307,7 +340,12 @@ def _shape(data: HitlistData) -> tuple:
             edition.size,
             tuple(
                 sorted(
-                    (e.position, tuple(s.id for s in e.songs)) for e in edition.entries
+                    (
+                        e.position,
+                        tuple(s.id for s in e.songs),
+                        tuple(sorted(e.source_ids.items())),
+                    )
+                    for e in edition.entries
                 )
             ),
         )
@@ -367,7 +405,7 @@ _DOCUMENTED_FIELDS = {
     "top-level": {"chart", "songs", "editions"},
     "song": {"artist", "title"},
     "edition": {"axes", "size", "entries"},
-    "entry": {"position", "songs"},
+    "entry": {"position", "songs", "source_ids"},
 }
 
 

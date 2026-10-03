@@ -70,6 +70,62 @@ class TestRawEntry:
         with pytest.raises(ValueError, match="songs"):
             RawEntry(1, ())
 
+    def test_source_ids_default_to_empty(self):
+        assert dict(RawEntry(1, (_song(),)).source_ids) == {}
+
+    def test_source_ids_are_kept(self):
+        ids = {"top40.nl/title": "8522", "top40.nl/version": "7417"}
+        assert dict(RawEntry(1, (_song(),), ids).source_ids) == ids
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"": "1"},
+            {"k": ""},
+            {"   ": "1"},
+            {"k": "  "},
+            {1: "1"},
+            {"k": 8522},
+            {"k": None},
+            "top40.nl/title=8522",
+            [("k", "v")],
+        ],
+    )
+    def test_bad_source_ids_rejected(self, bad):
+        with pytest.raises(ValueError, match="source_ids must map non-empty strings"):
+            RawEntry(1, (_song(),), bad)
+
+    def test_source_ids_are_a_read_only_copy(self):
+        given = {"top40.nl/title": "1"}
+        entry = RawEntry(1, (_song(),), given)
+        given["top40.nl/title"] = "2"
+        assert entry.source_ids["top40.nl/title"] == "1"
+        with pytest.raises(TypeError):
+            entry.source_ids["top40.nl/title"] = "3"
+
+    def test_source_ids_count_for_equality_not_hashing(self):
+        a = RawEntry(1, (_song(),), {"top40.nl/title": "1"})
+        b = RawEntry(1, (_song(),), {"top40.nl/title": "2"})
+        assert a == RawEntry(1, (_song(),), {"top40.nl/title": "1"})
+        assert a != b
+        assert hash(a) == hash(b)
+
+    @pytest.mark.parametrize("ids", [{}, {"top40.nl/title": "1"}])
+    def test_entries_pickle_deepcopy_and_asdict(self, ids):
+        # Review: a third-party ingestor may parse pages in a process pool or
+        # cache entries; RawEntry was picklable before source_ids existed.
+        import copy
+        import dataclasses
+        import pickle
+
+        entry = RawEntry(1, (_song(),), ids)
+        assert pickle.loads(pickle.dumps(entry)) == entry
+        assert copy.deepcopy(entry) == entry
+        assert dataclasses.asdict(entry)["source_ids"] == ids
+        clone = pickle.loads(pickle.dumps(entry))
+        with pytest.raises(TypeError):
+            clone.source_ids["x/y"] = "z"
+
 
 class TestEditionRef:
     def test_equality_and_hash_by_axes(self):
