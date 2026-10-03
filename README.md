@@ -287,7 +287,7 @@ top2000: re-acquired 27 editions (1999–2025), 54,000 entries, 0 new songs
 top2000: up to date (27 editions)
 top2000: 2 editions in the file are not listed by the source (1990–1991); kept
 top2000: dropped 2 editions not listed by the source (1990–1991)
-top40: FAILED — <reason>; file unchanged
+kerst: FAILED — <reason>; file unchanged
 ```
 
 **The `top2000` ingestor** reads the consolidated table on Dutch

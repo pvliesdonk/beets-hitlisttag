@@ -50,7 +50,9 @@ review easier.
 A new chart source is an ingestor in `beetsplug/hitlisttag/ingestors/`.
 [docs/writing-an-ingestor.md](docs/writing-an-ingestor.md) describes the
 contract and how to test one. Bundled ingestors are tested against
-made-up or trimmed fixtures only: never commit a real chart listing.
+made-up or trimmed fixtures only: never commit a real chart listing,
+since complete chart listings generally can't be redistributed (see
+[The chart dataset](README.md#the-chart-dataset)).
 
 ## Releases
 

@@ -46,7 +46,7 @@ you keep yourself, `kerst-2023.csv` and so on, each with a header row
 
        def editions(self):
            years = []
-           for path in sorted(SOURCE.glob("kerst-*.csv")):
+           for path in sorted(SOURCE.glob("*.csv")):
                match = re.fullmatch(r"kerst-(\d{4})\.csv", path.name)
                if match:
                    years.append(int(match.group(1)))
@@ -57,7 +57,7 @@ you keep yourself, `kerst-2023.csv` and so on, each with a header row
            try:
                with path.open(encoding="utf-8", newline="") as fh:
                    rows = list(csv.DictReader(fh))
-           except OSError as err:
+           except (OSError, UnicodeDecodeError, csv.Error) as err:
                raise IngestError(f"cannot read {path}: {err}") from err
            try:
                entries = tuple(
@@ -226,7 +226,10 @@ How scripts in your folder are loaded:
 | The data breaks a rule (position out of range, empty title, …) | Nothing: the contract classes raise `ValueError` | `kerst: FAILED — ingestor for kerst broke its contract: …` |
 | A bug in your script | Nothing | A Python traceback |
 
-Whatever goes wrong, the chart's dataset file stays exactly as it was.
+You can also catch a contract `ValueError` yourself and raise
+`IngestError` with your own message, as the quick-start example does for
+a malformed row. Either way the chart fails cleanly. Whatever goes
+wrong, the chart's dataset file stays exactly as it was.
 
 ## Contributing an ingestor
 
