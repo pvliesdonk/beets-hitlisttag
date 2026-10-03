@@ -233,12 +233,20 @@ Everything an ingestor uses comes from `beetsplug.hitlisttag.ingest`:
 | --- | --- |
 | `EditionRef(axes)` | The identity of one edition: its axis values, such as `EditionRef({"year": 2023})` or `EditionRef({"year": 2024, "week": 7})`. |
 | `RawSong(artist, title)` | One credited song, spelled as published. Both must be non-empty. |
-| `RawEntry(position, songs)` | One release at one rank. `songs` is a tuple of `RawSong`, usually just one. |
+| `RawEntry(position, songs, source_ids={})` | One release at one rank. `songs` is a tuple of `RawSong`, usually just one. `source_ids` is optional; see below. |
 | `AcquiredEdition(ref, size, entries)` | One edition: the ref it answers, its real size, and a tuple of `RawEntry`. |
 | `IngestError(message)` | Raise it when the source fails or changes. |
 
 *Axes* are what identify an edition: just `year` for a yearly chart,
 `year` and `week` for a weekly one.
+
+If the source publishes its own identifiers for an entry, such as an id in
+the link to the song's page, pass them as `source_ids`, keyed
+`<source>/<kind>`: `{"top40.nl/title": "8522", "top40.nl/version": "7417"}`.
+Keys and values are non-empty strings, recorded as the source gives them.
+They are stored with the entry and never change which song it resolves to;
+they are there so that later curation can check whether two entries are
+really the same song. Leave them out if the source has none.
 
 The ingestor is any object with these four members. There is no base
 class to inherit from:
