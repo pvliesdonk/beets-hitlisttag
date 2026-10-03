@@ -142,6 +142,12 @@ from that dataset. `stated`.
   owner chose to capture top40.nl's title ids, which group more broadly
   (covers included), as optional per-entry source ids
   ([#125](https://github.com/pvliesdonk/beets-hitlisttag/issues/125)). `stated`.
+  Different versions sharing one position, as by 1960s Dutch chart
+  practice (*Il Silenzio*, 1965 #3, credited to three artists), are
+  treated like a double or triple A-side: each version gets the
+  position. `stated` (2026-10-03); the owner notes other chart
+  followers may not agree, so this is one more reading the beets-side
+  matching could make configurable.
 - **Raw data is disposable; curation is precious.** Acquired editions are
   re-acquirable at will; hand-curation (aliases, entry–song links, merges,
   splits) must survive full re-acquisition. `derived`.
@@ -687,7 +693,9 @@ remain. `derived`.
   the Top 40 (#117 still scrapes it; recomputing is a later check); the
   same song means a re-release or remaster, a different version is a
   different song, and entries are assumed distinct until an explicit
-  merge; a chart entry that folds in a remix credits the base song only;
+  merge; a chart entry that folds in a remix credits the base song only,
+  while different versions sharing a position each get it, like a
+  double A-side;
   source ids are captured now as merge hints (#125); and a development
   fetch cache joins the shared top40.nl groundwork (#126). Both new
   issues block both ingestors. The spike's "~1 GB" was the decoded size;
