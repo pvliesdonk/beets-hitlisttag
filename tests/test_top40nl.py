@@ -31,7 +31,12 @@ def test_fetcher_is_configured_for_the_site():
     assert isinstance(fetcher, Fetcher)
     assert fetcher._min_interval == 1.0
     adapter = fetcher._session.get_adapter(top40nl.BASE_URL + "/")
-    assert "ssl_context" in adapter.poolmanager.connection_pool_kw
+    ctx = adapter.poolmanager.connection_pool_kw["ssl_context"]
+    trusted = {
+        dict(pair[0] for pair in cert["subject"]).get("commonName")
+        for cert in ctx.get_ca_certs()
+    }
+    assert "Sectigo Public Server Authentication CA DV R36" in trusted
 
 
 def test_base_url():

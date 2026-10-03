@@ -37,8 +37,10 @@ from beetsplug.hitlisttag.ingest import discover_ingestors
 found = discover_ingestors(None, log=logging.getLogger("check_dist"))
 assert "top2000" in found, f"bundled ingestors found: {sorted(found)}"
 requires = " ".join(metadata.requires("beets-hitlisttag") or [])
-for dep in ("beets", "mediafile", "requests"):
+for dep in ("beets", "mediafile", "requests", "urllib3", "certifi"):
     assert dep in requires, f"{dep!r} missing from declared requirements: {requires}"
+# Fetcher's Retry(allowed_methods=...) needs urllib3 1.26 or later.
+assert "urllib3>=1.26" in requires, f"urllib3 floor missing: {requires}"
 print("smoke import ok:", HitlistTag.__name__, sorted(found))
 """
 

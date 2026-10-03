@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import http.server
+import shutil
 import socket
 import ssl
+import subprocess
 import threading
 
 import certifi
@@ -68,7 +70,7 @@ def server():
 
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
-    """No proxies for 127.0.0.1, and no real backoff sleeps in urllib3."""
+    """No proxies or CA overrides, and no real backoff sleeps in urllib3."""
     for var in (
         "HTTP_PROXY",
         "HTTPS_PROXY",
@@ -76,6 +78,8 @@ def _offline(monkeypatch):
         "http_proxy",
         "https_proxy",
         "all_proxy",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(Retry, "get_backoff_time", lambda self: 0)
@@ -140,16 +144,6 @@ class TestOutcomes:
         url = f"http://127.0.0.1:{_free_port()}/x"
         with pytest.raises(IngestError, match="cannot fetch .*127.0.0.1"):
             make().get(url)
-
-    def test_ssl_error_names_host_and_chain(self, monkeypatch):
-        fetcher = make()
-
-        def boom(*args, **kwargs):
-            raise requests.exceptions.SSLError("unable to get local issuer")
-
-        monkeypatch.setattr(fetcher._session, "get", boom)
-        with pytest.raises(IngestError, match=r"www\.top40\.nl.*certificate chain"):
-            fetcher.get("https://www.top40.nl/top40")
 
 
 class TestRetryPolicy:
@@ -385,3 +379,158 @@ class TestReviewFixes:
         make().get(server.base + "/a")
         assert len(list((tmp_path / "devcache").rglob("a.page"))) == 1
         assert not (tmp_path / "~").exists()
+
+
+def _openssl(*args: str, cwd) -> None:
+    subprocess.run(["openssl", *args], cwd=cwd, check=True, capture_output=True)
+
+
+@pytest.fixture
+def incomplete_chain_server(tmp_path):
+    """An HTTPS server on 127.0.0.1 that sends only its leaf certificate.
+
+    The leaf is issued by a throwaway intermediate, issued by a throwaway
+    root, all generated here with the openssl CLI (nothing is committed).
+    This is top40.nl's fault: a client must already hold the intermediate.
+    Yields (url, root_pem, intermediate_pem).
+    """
+    if shutil.which("openssl") is None:
+        pytest.skip("needs the openssl command-line tool")
+    d = tmp_path
+    (d / "ca.ext").write_text(
+        "basicConstraints=critical,CA:TRUE\n"
+        "keyUsage=critical,keyCertSign,cRLSign\n"
+        "subjectKeyIdentifier=hash\n"
+        "authorityKeyIdentifier=keyid:always\n"
+    )
+    (d / "leaf.ext").write_text(
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        "extendedKeyUsage=serverAuth\n"
+        "subjectAltName=IP:127.0.0.1\n"
+        "subjectKeyIdentifier=hash\n"
+        "authorityKeyIdentifier=keyid:always\n"
+    )
+    new_key = ["-newkey", "rsa:2048", "-nodes"]
+    _openssl(
+        "req",
+        "-x509",
+        *new_key,
+        "-keyout",
+        "root.key",
+        "-out",
+        "root.pem",
+        "-days",
+        "2",
+        "-subj",
+        "/CN=hitlisttag test root",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-addext",
+        "keyUsage=critical,keyCertSign,cRLSign",
+        cwd=d,
+    )
+    _openssl(
+        "req",
+        *new_key,
+        "-keyout",
+        "int.key",
+        "-out",
+        "int.csr",
+        "-subj",
+        "/CN=hitlisttag test intermediate",
+        cwd=d,
+    )
+    _openssl(
+        "x509",
+        "-req",
+        "-in",
+        "int.csr",
+        "-CA",
+        "root.pem",
+        "-CAkey",
+        "root.key",
+        "-CAcreateserial",
+        "-out",
+        "int.pem",
+        "-days",
+        "2",
+        "-extfile",
+        "ca.ext",
+        cwd=d,
+    )
+    _openssl(
+        "req",
+        *new_key,
+        "-keyout",
+        "leaf.key",
+        "-out",
+        "leaf.csr",
+        "-subj",
+        "/CN=127.0.0.1",
+        cwd=d,
+    )
+    _openssl(
+        "x509",
+        "-req",
+        "-in",
+        "leaf.csr",
+        "-CA",
+        "int.pem",
+        "-CAkey",
+        "int.key",
+        "-CAcreateserial",
+        "-out",
+        "leaf.pem",
+        "-days",
+        "2",
+        "-extfile",
+        "leaf.ext",
+        cwd=d,
+    )
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            data = b"hello"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *args):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(d / "leaf.pem", d / "leaf.key")  # leaf only
+    srv.socket = context.wrap_socket(srv.socket, server_side=True)
+    thread = threading.Thread(
+        target=srv.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    yield (
+        f"https://127.0.0.1:{srv.server_port}/page",
+        (d / "root.pem").read_text(),
+        (d / "int.pem").read_text(),
+    )
+    srv.shutdown()
+    srv.server_close()
+
+
+class TestRealTLS:
+    """extra_ca_pem against a real incomplete chain, not a mocked error."""
+
+    def test_without_extra_ca_is_chain_error(self, incomplete_chain_server):
+        url, _root, _intermediate = incomplete_chain_server
+        with pytest.raises(IngestError, match=r"127\.0\.0\.1.*certificate chain"):
+            make().get(url)
+
+    def test_with_root_only_is_chain_error(self, incomplete_chain_server):
+        url, root, _intermediate = incomplete_chain_server
+        with pytest.raises(IngestError, match="certificate chain"):
+            make(extra_ca_pem=root).get(url)
+
+    def test_with_root_and_intermediate_succeeds(self, incomplete_chain_server):
+        url, root, intermediate = incomplete_chain_server
+        assert make(extra_ca_pem=root + intermediate).get(url) == "hello"
