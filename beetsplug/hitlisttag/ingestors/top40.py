@@ -5,8 +5,10 @@ https://www.top40.nl/top40/<year>/week-<week>: one page per weekly chart
 since 2 January 1965 (research spike #116). Weeks are numbered by the site;
 every chart is dated on a Saturday, but year-end breaks make a year 51, 52
 or 53 weeks long, so the weeks are listed from ``LAST_WEEK`` (a one-time
-probe, 2026-10-03), the latest week in ``/top40``'s title, and for completed
-years after the table the "previous" link on the next year's week 1.
+probe, 2026-10-03) and ``KNOWN_MISSING``, the latest week in ``/top40``'s
+title, and for years after the table their first chart (week 1, or week 2
+after a New Year break), whose "previous" link gives the year before's last
+week.
 
 The site reserves copyright and database rights over its data. Each user's
 acquired copy is private and must stay unpublished; the plugin ships no chart
@@ -57,8 +59,14 @@ Calendar metadata, not chart data; it only saves fetches, since the
 "previous" link on the next year's week 1 gives the same answer.
 """
 
-KNOWN_MISSING: frozenset[tuple[int, int]] = frozenset()
-"""(year, week) pairs inside a year's range that the site does not have."""
+KNOWN_MISSING: frozenset[tuple[int, int]] = frozenset(
+    (year, 1) for year in (1982, 1983, 1988, 1993, 1994, 1997, 1998, 1999, 2000, 2005)
+)
+"""(year, week) pairs inside a year's range that the site does not have.
+
+From the first full acquisition (2026-10-03): in these years the New Year
+break fell in the first week, so the first chart is week 2.
+"""
 
 _LATEST = re.compile(r"<title>\s*Top 40-lijst van week (\d+), (\d{4})\b")
 
@@ -137,33 +145,44 @@ class Top40Ingestor:
                 f"week {latest_week}) is before the built-in table's last year "
                 f"{max(LAST_WEEK)}"
             )
-        last = {year: self._last_week(year) for year in range(FIRST_YEAR, latest_year)}
+        last = dict(LAST_WEEK)
+        first: dict[int, int] = {}
+        for year in range(max(LAST_WEEK) + 1, latest_year + 1):
+            first[year], previous_last = self._first_week(year)
+            if year - 1 not in last:
+                last[year - 1] = previous_last
         last[latest_year] = latest_week
         return [
             EditionRef({"year": year, "week": week})
             for year, final in last.items()
-            for week in range(1, final + 1)
+            for week in range(first.get(year, 1), final + 1)
             if (year, week) not in KNOWN_MISSING
         ]
 
-    def _last_week(self, year: int) -> int:
-        """A completed year's last week: the table, or next year's week 1."""
-        if year in LAST_WEEK:
-            return LAST_WEEK[year]
-        path = f"/top40/{year + 1}/week-1"
-        html = self._page(path)
-        if html is None:
-            raise IngestError(
-                f"cannot list Top 40 weeks: {path} not found, so the last week "
-                f"of {year} is unknown"
-            )
-        weeks = {int(w) for w in re.findall(rf"/top40/{year}/week-(\d+)(?!\d)", html)}
-        if len(weeks) != 1:
-            raise IngestError(
-                f"cannot list Top 40 weeks: {path} links {len(weeks)} different "
-                f"last weeks of {year}"
-            )
-        return weeks.pop()
+    def _first_week(self, year: int) -> tuple[int, int]:
+        """A year after the table: its first week, and the year before's last.
+
+        The first chart is week 1, or week 2 when the New Year break fell in
+        the first week; its "previous" link names the last week before it.
+        """
+        for week in (1, 2):
+            path = f"/top40/{year}/week-{week}"
+            html = self._page(path)
+            if html is None:
+                continue
+            weeks = {
+                int(w) for w in re.findall(rf"/top40/{year - 1}/week-(\d+)(?!\d)", html)
+            }
+            if len(weeks) != 1:
+                raise IngestError(
+                    f"cannot list Top 40 weeks: {path} links {len(weeks)} different "
+                    f"last weeks of {year - 1}"
+                )
+            return week, weeks.pop()
+        raise IngestError(
+            f"cannot list Top 40 weeks: neither week 1 nor week 2 of {year} exists, "
+            f"so its first week and the last week of {year - 1} are unknown"
+        )
 
     def fetch(self, ref: EditionRef) -> AcquiredEdition:
         year, week = ref.axes["year"], ref.axes["week"]

@@ -77,11 +77,11 @@ def _latest(year: int, week: int) -> str:
     return _week_page(title_text=f"Top 40-lijst van week {week}, {year}")
 
 
-def _week1(year: int, previous_last: int) -> str:
-    """Week 1 of ``year`` with nav links like the site's: previous, self, next."""
+def _week1(year: int, previous_last: int, week: int = 1) -> str:
+    """A year's first week with nav links like the site's: previous, self, next."""
     links = "".join(
         f'<a href="https://www.top40.nl/top40/{y}/week-{w}">x</a>'
-        for y, w in ((year - 1, previous_last), (year, 1), (year, 2))
+        for y, w in ((year - 1, previous_last), (year, week), (year, week + 1))
     )
     return f"<html><body>{links}</body></html>"
 
@@ -178,7 +178,12 @@ class TestTable:
 
 class TestEditions:
     def test_table_years_then_the_latest_year(self):
-        site = Site({"/top40": _latest(TABLE_END + 1, 3)})
+        site = Site(
+            {
+                "/top40": _latest(TABLE_END + 1, 3),
+                f"/top40/{TABLE_END + 1}/week-1": _week1(TABLE_END + 1, 52),
+            }
+        )
         refs = Top40Ingestor(get=site).editions()
         ywk = _years_weeks(refs)
         assert ywk[0] == (FIRST_YEAR, 1)
@@ -188,32 +193,65 @@ class TestEditions:
             (TABLE_END + 1, 2),
             (TABLE_END + 1, 3),
         ]
-        assert len(refs) == sum(LAST_WEEK.values()) + 3
+        assert len(refs) == sum(LAST_WEEK.values()) - len(top40.KNOWN_MISSING) + 3
         assert ywk == sorted(ywk)
-        assert site.calls == [BASE + "/top40"]
+        assert site.calls == [BASE + "/top40", BASE + f"/top40/{TABLE_END + 1}/week-1"]
 
     def test_listed_once_per_instance(self):
-        site = Site({"/top40": _latest(TABLE_END + 1, 3)})
+        site = Site(
+            {
+                "/top40": _latest(TABLE_END + 1, 3),
+                f"/top40/{TABLE_END + 1}/week-1": _week1(TABLE_END + 1, 52),
+            }
+        )
         ing = Top40Ingestor(get=site)
         ing.editions()
         ing.editions()
-        assert site.calls == [BASE + "/top40"]
+        assert len(site.calls) == 2
 
     def test_early_january_reads_the_completed_year_from_week_1(self):
         done = TABLE_END + 1
         site = Site(
             {
                 "/top40": _latest(done + 1, 1),
+                f"/top40/{done}/week-1": _week1(done, 52),
                 f"/top40/{done + 1}/week-1": _week1(done + 1, 53),
             }
         )
         ywk = _years_weeks(Top40Ingestor(get=site).editions())
         assert ywk[-3:] == [(done, 52), (done, 53), (done + 1, 1)]
-        assert site.calls == [BASE + "/top40", BASE + f"/top40/{done + 1}/week-1"]
+        assert site.calls == [
+            BASE + "/top40",
+            BASE + f"/top40/{done}/week-1",
+            BASE + f"/top40/{done + 1}/week-1",
+        ]
+
+    def test_year_without_week_1_starts_at_week_2(self):
+        done = TABLE_END + 1
+        site = Site(
+            {
+                "/top40": _latest(done + 1, 4),
+                f"/top40/{done}/week-1": _week1(done, 52),
+                f"/top40/{done + 1}/week-2": _week1(done + 1, 51, week=2),
+            }
+        )
+        ywk = _years_weeks(Top40Ingestor(get=site).editions())
+        assert ywk[-4:] == [(done, 51), (done + 1, 2), (done + 1, 3), (done + 1, 4)]
+
+    def test_known_missing_holds_the_live_run_findings(self):
+        assert top40.KNOWN_MISSING == frozenset(
+            (year, 1)
+            for year in (1982, 1983, 1988, 1993, 1994, 1997, 1998, 1999, 2000, 2005)
+        )
 
     def test_known_missing_weeks_are_left_out(self, monkeypatch):
         monkeypatch.setattr(top40, "KNOWN_MISSING", frozenset({(1970, 30)}))
-        site = Site({"/top40": _latest(TABLE_END + 1, 1)})
+        site = Site(
+            {
+                "/top40": _latest(TABLE_END + 1, 1),
+                f"/top40/{TABLE_END + 1}/week-1": _week1(TABLE_END + 1, 52),
+            }
+        )
         assert (1970, 30) not in _years_weeks(Top40Ingestor(get=site).editions())
 
     @pytest.mark.parametrize(
@@ -226,11 +264,19 @@ class TestEditions:
             page = _week1(done + 1, 52) + _week1(done + 1, 53)
         elif page is not None:
             page = page.format(links='<a href="/top40/1999/week-4">x</a>')
-        pages = {"/top40": _latest(done + 1, 1)}
+        pages = {
+            "/top40": _latest(done + 1, 1),
+            f"/top40/{done}/week-1": _week1(done, 52),
+        }
         if page is not None:
             pages[f"/top40/{done + 1}/week-1"] = page
         with pytest.raises(IngestError, match=f"cannot list Top 40 weeks: .*{done}"):
             Top40Ingestor(get=Site(pages)).editions()
+
+    def test_neither_week_1_nor_week_2_is_an_ingest_error(self):
+        site = Site({"/top40": _latest(TABLE_END + 1, 5)})
+        with pytest.raises(IngestError, match="neither week 1 nor week 2"):
+            Top40Ingestor(get=site).editions()
 
     @pytest.mark.parametrize("page", [None, "<html><head><title>Top40.nl</title>"])
     def test_unusable_latest_page_is_an_ingest_error(self, page):
@@ -314,7 +360,10 @@ class TestFetcher:
 
         class FakeFetcher:
             def get(self, url):
-                return _latest(TABLE_END + 1, 1) if url == BASE + "/top40" else None
+                return {
+                    BASE + "/top40": _latest(TABLE_END + 1, 1),
+                    BASE + f"/top40/{TABLE_END + 1}/week-1": _week1(TABLE_END + 1, 52),
+                }.get(url)
 
         def fake_fetcher():
             made.append(1)
@@ -361,7 +410,8 @@ def test_real_cached_week_pages(caplog):
     assert "cannot restore" not in caplog.text
     for page in pages:
         year = int(page.parent.name)
-        if page.stem == "week-1" and year - 1 in LAST_WEEK:
+        first = "week-2" if (year, 1) in top40.KNOWN_MISSING else "week-1"
+        if page.stem == first and year - 1 in LAST_WEEK:
             weeks = {
                 int(w)
                 for w in re.findall(
