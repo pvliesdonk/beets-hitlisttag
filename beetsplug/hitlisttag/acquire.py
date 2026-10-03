@@ -47,10 +47,16 @@ def merge_acquired(
     acquired: Sequence[AcquiredEdition],
     source: Path,
     log: logging.Logger,
+    replace: bool = False,
+    keep_only: set[tuple[int, ...]] | None = None,
 ) -> tuple[HitlistData, int]:
     """Merge ``acquired`` editions into ``existing``; return it and the new-song count.
 
-    Existing songs and editions are kept unchanged. A song is reused by its
+    With ``replace``, an acquired edition replaces an existing one with the
+    same axes (``--force``); with ``keep_only``, existing editions whose axes
+    are not in that set are dropped (``--prune``). Songs are never deleted,
+    so ids stay valid for anything that links to them. Otherwise existing
+    songs and editions are kept unchanged. A song is reused by its
     normalized key (lowest id wins among existing duplicates, with a warning);
     otherwise a new id continues the file's numeric sequence. Within one
     edition an id never repeats: a second entry resolving to the same key gets
@@ -58,6 +64,15 @@ def merge_acquired(
     """
     songs: dict[str, Song] = dict(existing.songs) if existing else {}
     editions: list[Edition] = list(existing.editions) if existing else []
+
+    def edition_key(axes: Mapping[str, int]) -> tuple[int, ...]:
+        return tuple(axes[name] for name in axis_names)
+
+    if replace:
+        incoming = {edition_key(a.ref.axes) for a in acquired}
+        editions = [e for e in editions if edition_key(e.axes) not in incoming]
+    if keep_only is not None:
+        editions = [e for e in editions if edition_key(e.axes) in keep_only]
 
     index: dict[SongKey, str] = {}
     for sid in sorted(songs, key=_id_sort_key):
@@ -129,23 +144,36 @@ class ChartResult:
     new_songs: int = 0
     held: int = 0
     unlisted: list[tuple[int, ...]] = field(default_factory=list)
+    pruned: list[tuple[int, ...]] = field(default_factory=list)
+    forced: bool = False
     error: str | None = None
 
     def lines(self, axis_names: Sequence[str]) -> list[str]:
         if self.error is not None:
             return [f"{self.chart}: FAILED — {self.error}; file unchanged"]
-        if not self.acquired:
+        if not self.acquired and not self.pruned:
             out = [f"{self.chart}: up to date ({_plural(self.held, 'edition')})"]
+        elif not self.acquired:
+            out = []
         else:
             span = ""
             if len(axis_names) == 1:
                 years = [ref.axes[axis_names[0]] for ref in self.acquired]
                 span = f" ({_ranges(years)})"
             out = [
-                f"{self.chart}: acquired {_plural(len(self.acquired), 'edition')}"
+                f"{self.chart}: {'re-acquired' if self.forced else 'acquired'} "
+                f"{_plural(len(self.acquired), 'edition')}"
                 f"{span}, {_plural(self.entries, 'entry', 'entries')}, "
                 f"{_plural(self.new_songs, 'new song')}"
             ]
+        if self.pruned:
+            span = ""
+            if len(axis_names) == 1:
+                span = f" ({_ranges([key[0] for key in self.pruned])})"
+            out.append(
+                f"{self.chart}: dropped {_plural(len(self.pruned), 'edition')} "
+                f"not listed by the source{span}"
+            )
         if self.unlisted:
             span = ""
             if len(axis_names) == 1:
@@ -164,14 +192,19 @@ def acquire_chart(
     path: Path,
     hitlists: Mapping[str, list[str]],
     log: logging.Logger,
+    force: bool = False,
+    prune: bool = False,
 ) -> ChartResult:
     """Acquire the editions ``existing`` lacks and write them to ``path``.
 
-    All-or-nothing: on any reported failure the file is left as it was. Only
-    exceptions the contract does not anticipate propagate.
+    With ``force``, every edition the source lists is re-acquired, replacing
+    same-axes editions; with ``prune`` (meaningful only with ``force``),
+    editions the source no longer lists are dropped. All-or-nothing: on any
+    reported failure the file is left as it was. Only exceptions the
+    contract does not anticipate propagate.
     """
     chart = ingestor.chart
-    result = ChartResult(chart)
+    result = ChartResult(chart, forced=force)
     if tuple(ingestor.axes) != tuple(axis_names):
         result.error = (
             f"ingestor axes {list(ingestor.axes)} differ from configured axes "
@@ -199,12 +232,26 @@ def acquire_chart(
     # other exception from the ingestor propagates (#99).
     try:
         listed: list[EditionRef] = []
+        seen: set[EditionRef] = set()
         for ref in ingestor.editions():
-            if ref not in listed:
+            if ref not in seen:
+                seen.add(ref)
                 listed.append(ref)
-        result.unlisted = sorted(held - {key(ref.axes) for ref in listed})
-        missing = [ref for ref in listed if key(ref.axes) not in held]
-        if not missing:
+        listed_keys = {key(ref.axes) for ref in listed}
+        if prune and not listed:
+            result.error = (
+                "the source lists no editions; refusing to prune every edition"
+            )
+            return result
+        if prune:
+            result.pruned = sorted(held - listed_keys)
+        else:
+            result.unlisted = sorted(held - listed_keys)
+        if force:
+            missing = listed
+        else:
+            missing = [ref for ref in listed if key(ref.axes) not in held]
+        if not missing and not result.pruned:
             return result
         if existing is not None:
             dropped = unknown_fields(existing.source)
@@ -223,7 +270,16 @@ def acquire_chart(
         result.error = f"ingestor for {chart} broke its contract: {err}"
         return result
 
-    data, new_songs = merge_acquired(existing, chart, axis_names, acquired, path, log)
+    data, new_songs = merge_acquired(
+        existing,
+        chart,
+        axis_names,
+        acquired,
+        path,
+        log,
+        replace=force,
+        keep_only=listed_keys if prune else None,
+    )
 
     # Write phase: only now are OS errors about the dataset file.
     try:

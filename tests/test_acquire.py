@@ -424,3 +424,111 @@ class TestPrReviewMinting:
         assert _ids(data, 2001) == ["1"]
         assert list(data.songs) == ["1", "²"]
         assert new == 1
+
+
+class TestForce:
+    """#101: --force re-acquires listed editions; --prune drops unlisted ones."""
+
+    def _seed(self, tmp_path, editions):
+        path = tmp_path / "fake.json"
+        acquire_chart(FakeIngestor(editions), ["year"], None, path, HITLISTS, log)
+        return path
+
+    def test_force_replaces_same_axes_editions_and_keeps_ids(self, tmp_path):
+        path = self._seed(tmp_path, {2001: [("A", "x"), ("B", "y")]})
+        src = FakeIngestor({2001: [("B", "y"), ("a", "X"), ("C", "z")]})
+        result = acquire_chart(
+            src, ["year"], _read(tmp_path), path, HITLISTS, log, force=True
+        )
+        assert result.error is None and src.fetched == [2001]
+        data = _read(tmp_path)
+        assert [e.axes["year"] for e in data.editions] == [2001]  # not duplicated
+        assert _ids(data, 2001) == ["2", "1", "3"]  # B, A reused; C new
+        assert result.new_songs == 1
+        assert result.lines(["year"])[0].startswith("fake: re-acquired 1 edition")
+
+    def test_force_replaces_hand_authored_partial_edition(self, tmp_path):
+        path = tmp_path / "fake.json"
+        song = Song("1", "A", "x")
+        partial = HitlistData(
+            "fake", {"1": song}, [Edition({"year": 2001}, 3, [Entry(2, [song])])], path
+        )
+        from beetsplug.hitlisttag.dataset import write_dataset_file
+
+        write_dataset_file(partial, path, HITLISTS, log)
+        src = FakeIngestor({2001: [("C", "z"), ("A", "x"), ("D", "w")]})
+        acquire_chart(src, ["year"], _read(tmp_path), path, HITLISTS, log, force=True)
+        edition = _read(tmp_path).editions[0]
+        assert [e.position for e in edition.entries] == [1, 2, 3]
+        assert _ids(_read(tmp_path), 2001) == ["2", "1", "3"]
+
+    def test_force_without_prune_keeps_unlisted(self, tmp_path):
+        path = self._seed(tmp_path, {1990: [("Old", "one")], 2001: [("A", "x")]})
+        src = FakeIngestor({2001: [("A", "x")]})
+        result = acquire_chart(
+            src, ["year"], _read(tmp_path), path, HITLISTS, log, force=True
+        )
+        assert [e.axes["year"] for e in _read(tmp_path).editions] == [1990, 2001]
+        assert result.lines(["year"])[-1].endswith("(1990); kept")
+
+    def test_force_with_prune_drops_unlisted_editions_but_keeps_songs(self, tmp_path):
+        path = self._seed(tmp_path, {1990: [("Old", "one")], 2001: [("A", "x")]})
+        src = FakeIngestor({2001: [("A", "x")]})
+        result = acquire_chart(
+            src, ["year"], _read(tmp_path), path, HITLISTS, log, force=True, prune=True
+        )
+        data = _read(tmp_path)
+        assert [e.axes["year"] for e in data.editions] == [2001]
+        assert data.songs["1"].artist == "Old"  # songs are never deleted
+        assert result.lines(["year"])[-1] == (
+            "fake: dropped 1 edition not listed by the source (1990)"
+        )
+
+    def test_prune_refuses_when_source_lists_nothing(self, tmp_path):
+        path = self._seed(tmp_path, {2001: [("A", "x")]})
+        before = path.read_bytes()
+        result = acquire_chart(
+            FakeIngestor({}),
+            ["year"],
+            _read(tmp_path),
+            path,
+            HITLISTS,
+            log,
+            force=True,
+            prune=True,
+        )
+        assert "lists no editions" in result.error
+        assert path.read_bytes() == before
+
+    def test_force_failure_leaves_file_unchanged(self, tmp_path):
+        path = self._seed(tmp_path, {2001: [("A", "x")], 2002: [("B", "y")]})
+        before = path.read_bytes()
+        src = FakeIngestor({2001: [("A", "x")], 2002: [("B", "y")]}, fail_on=2002)
+        result = acquire_chart(
+            src, ["year"], _read(tmp_path), path, HITLISTS, log, force=True
+        )
+        assert result.error == "source broke on 2002"
+        assert path.read_bytes() == before
+
+
+class TestRefDeduplication:
+    def test_dedup_does_not_compare_refs_pairwise(self, tmp_path):
+        # Quadratic `ref not in list` would make ~n²/2 equality comparisons.
+        comparisons = []
+
+        class CountingRef(EditionRef):
+            def __eq__(self, other):
+                comparisons.append(1)
+                return super().__eq__(other)
+
+            __hash__ = EditionRef.__hash__
+
+        class Many(FakeIngestor):
+            def editions(self):
+                return [CountingRef({"year": y}) for y in self.data]
+
+        years = {y: [("A", f"s{y}")] for y in range(1000, 1400)}
+        acquire_chart(
+            Many(years), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert len(comparisons) < 2000  # n = 400; pairwise would be ~80,000

@@ -252,3 +252,27 @@ class TestPreconditions:
         )
         with pytest.raises(ui.UserError, match="claimed by two"):
             _run(env, "fake")
+
+
+class TestForceFlags:
+    def test_flags_registered(self, env):
+        cmd = next(c for c in env.plugin.commands() if c.name == "chartsacquire")
+        opts, _ = cmd.parser.parse_args(["--force", "--prune", "fake"])
+        assert opts.force is True and opts.prune is True
+
+    def test_force_reacquires_through_the_command(self, env, capsys):
+        src = FakeSource(env.ingestors, "fake")
+        src.set({2001: [["A", "x"]]})
+        _run(env, "fake")
+        env.plugin.acquire(
+            env.helper.lib, SimpleNamespace(force=True, prune=False), ["fake"]
+        )
+        assert "fake: re-acquired 1 edition" in capsys.readouterr().out
+        assert src.calls() == [2001, 2001]
+
+    def test_prune_without_force_is_user_error(self, env):
+        FakeSource(env.ingestors, "fake")
+        with pytest.raises(ui.UserError, match="--prune requires --force"):
+            env.plugin.acquire(
+                env.helper.lib, SimpleNamespace(force=False, prune=True), ["fake"]
+            )

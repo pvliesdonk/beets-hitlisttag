@@ -254,7 +254,22 @@ class HitlistTag(BeetsPlugin):
             "chartsacquire",
             help="Acquire missing chart editions into the dataset from public sources",
         )
-        cmd5.parser.set_usage("%prog [CHART ...]")
+        cmd5.parser.set_usage("%prog [--force [--prune]] [CHART ...]")
+        cmd5.parser.add_option(
+            "-f",
+            "--force",
+            dest="force",
+            action="store_true",
+            default=False,
+            help="re-acquire every edition the source lists, replacing held ones",
+        )
+        cmd5.parser.add_option(
+            "--prune",
+            dest="prune",
+            action="store_true",
+            default=False,
+            help="with --force, drop editions the source no longer lists",
+        )
         cmd5.func = self.acquire
 
         return [cmd1, cmd2, cmd3, cmd4, cmd5]
@@ -440,6 +455,10 @@ class HitlistTag(BeetsPlugin):
 
     def acquire(self, lib: Library, opts: CommonOptionsParser, args: list[str]) -> None:
         """Acquire missing chart editions into the dataset (chartsacquire)."""
+        force = getattr(opts, "force", False)
+        prune = getattr(opts, "prune", False)
+        if prune and not force:
+            raise ui.UserError("hitlisttag: --prune requires --force")
         dataset_dir = self.dataset_dir
         if dataset_dir is None:
             raise ui.UserError(
@@ -489,7 +508,14 @@ class HitlistTag(BeetsPlugin):
             data = existing.get(chart)
             path = data.source if data else dataset_dir / f"{chart}.json"
             result = acquire_chart(
-                ingestors[chart], hitlists[chart], data, path, hitlists, self._log
+                ingestors[chart],
+                hitlists[chart],
+                data,
+                path,
+                hitlists,
+                self._log,
+                force=force,
+                prune=prune,
             )
             for line in result.lines(hitlists[chart]):
                 ui.print_(line)
