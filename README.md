@@ -15,9 +15,10 @@ It provides:
   positions);
 - a `hitlist` command that reconstructs a full chart for a given year (or
   year/week) from the library, including a report of missing positions;
-- a `chartsgen` command that generates `CHARTS` tags from a local chart
-  dataset you author or acquire yourself (see
-  [The chart dataset](#the-chart-dataset)).
+- a `chartsacquire` command that fills a local chart dataset from public
+  sources, one chart at a time, through pluggable ingestors;
+- a `chartsgen` command that generates `CHARTS` tags from that dataset
+  (see [The chart dataset](#the-chart-dataset)).
 
 ## Installation
 
@@ -97,9 +98,11 @@ value of the wrong type, is rejected when the tag is parsed.
 
 `chartsgen` generates `CHARTS` tags from a local dataset of chart
 history. The plugin ships no chart data — complete chart listings
-generally cannot be redistributed — so you author the dataset by hand or
-acquire it yourself, and point the plugin at it with the `dataset_dir`
-configuration key (see [Configuration](#configuration)).
+generally cannot be redistributed — so each user builds the dataset on
+their own machine: `chartsacquire` fetches it from public sources (see
+[`chartsacquire`](#chartsacquire)), and you can also author files by hand.
+Point the plugin at the dataset with the `dataset_dir` configuration key
+(see [Configuration](#configuration)).
 
 The dataset is one JSON file per hitlist, discovered recursively under
 `dataset_dir` (only lowercase `*.json` files are read; symlinked
@@ -208,6 +211,67 @@ beet hitlist top2000 2023
 beet hitlist -M top40 2024 5
 ```
 
+### `chartsacquire`
+
+Fetches chart editions from public sources into the dataset (requires
+`dataset_dir` to be configured). Each chart is fetched by an *ingestor*:
+a small piece of Python that knows one chart's source.
+
+```
+beet chartsacquire [--force [--prune]] [CHART ...]
+```
+
+Without arguments it acquires every chart that has both an ingestor and
+an entry in `hitlists`. A plain run fetches only the editions the chart's
+dataset file does not hold yet, so running it again after a new edition
+is published adds just that edition; a run with nothing new reports the
+chart as up to date and leaves the file alone.
+
+- `--force` re-acquires every edition the source lists, replacing the
+  ones the file already holds. Use it after the source corrects an
+  edition, or to turn a hand-authored partial edition into the full one.
+- `--prune` (only together with `--force`) also drops editions the
+  source no longer lists. Without it they are kept and reported. It
+  refuses to run when the source lists no editions at all.
+
+Song ids are stable across runs: a song whose artist and title already
+exist in the file (compared the way `chartsgen` matches, ignoring case,
+diacritics and punctuation) keeps its id, and songs are never deleted,
+even when no edition references them any more.
+
+Each chart is written all-or-nothing. The new file is written next to
+the old one, read back with the same reader `chartsgen` uses, and only
+then swapped in, so a failed run (a network error, a source that changed
+its layout) leaves the chart's file exactly as it was. Other charts in
+the same run still go ahead, and the command ends with an error naming
+the charts that failed. It also refuses, rather than overwrites, a
+`<chart>.json` that holds a different chart and a file carrying fields
+the dataset format does not define, since rewriting either would lose
+data.
+
+A report line per chart says what happened:
+
+```
+top2000: acquired 27 editions (1999–2025), 54,000 entries, 4,925 new songs
+top2000: up to date (27 editions)
+top40: FAILED — <reason>; file unchanged
+```
+
+**Bundled ingestors.** `top2000` reads the consolidated table on Dutch
+Wikipedia (*Lijst van Radio 2-Top 2000's*): every edition since 1999, in
+one request, under Wikipedia's CC BY-SA licence. The broadcaster's own
+site is not used, because its terms forbid automated retrieval. An
+edition column that is not complete on Wikipedia (as happens while a new
+edition is being entered each December) is skipped with a warning and
+picked up on a later run. Wikipedia's spelling is used, which is
+harmonised across years; the broadcaster's "(Albumversie)" markers do
+not appear.
+
+**Your own charts.** To acquire a chart the plugin does not cover, drop
+an ingestor script into `ingestor_dir` and add the chart to `hitlists`;
+nothing in the plugin needs changing. See
+[Writing an ingestor](docs/writing-an-ingestor.md).
+
 ### `chartsgen`
 
 Generates `CHARTS` tags for matching items from the chart dataset (see
@@ -276,6 +340,15 @@ relative path is resolved against the beets configuration directory, and
 ```yaml
 hitlisttag:
   dataset_dir: ~/charts
+```
+
+Ingestor scripts of your own are read from `ingestor_dir`, which
+defaults to `ingestors` under the beets configuration directory (for
+example `~/.config/beets/ingestors/`) and resolves the same way:
+
+```yaml
+hitlisttag:
+  ingestor_dir: ~/charts/ingestors
 ```
 
 A chart present in a file's `CHARTS` tag but absent from the configured

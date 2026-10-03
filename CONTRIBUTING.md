@@ -45,6 +45,13 @@ review easier.
   PRs on purpose.
 - Add or update tests with the change.
 
+## Ingestors
+
+A new chart source is an ingestor in `beetsplug/hitlisttag/ingestors/`.
+[docs/writing-an-ingestor.md](docs/writing-an-ingestor.md) describes the
+contract and how to test one. Bundled ingestors are tested against
+made-up or trimmed fixtures only: never commit a real chart listing.
+
 ## Releases
 
 The version comes from the git tag via `hatch-vcs`. Publishing a GitHub Release
