@@ -255,9 +255,15 @@ def _parse_entries(
     return entries
 
 
+def _is_numeric_id(song_id: str) -> bool:
+    """True for an ASCII-digit id. ``str.isdigit`` alone accepts ``"²"``,
+    which ``int`` then rejects."""
+    return song_id.isascii() and song_id.isdigit()
+
+
 def _id_sort_key(song_id: str) -> tuple[int, int, str]:
     """Numeric ids first, in numeric order; any other id after, by text."""
-    if song_id.isdigit():
+    if _is_numeric_id(song_id):
         return (0, int(song_id), "")
     return (1, 0, song_id)
 
@@ -290,6 +296,24 @@ def dump_dataset(data: HitlistData) -> str:
         ],
     }
     return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def _shape(data: HitlistData) -> tuple:
+    """Order-insensitive comparable form of the data a file round-trips."""
+    songs = {sid: (song.artist, song.title) for sid, song in data.songs.items()}
+    editions = sorted(
+        (
+            tuple(sorted(edition.axes.items())),
+            edition.size,
+            tuple(
+                sorted(
+                    (e.position, tuple(s.id for s in e.songs)) for e in edition.entries
+                )
+            ),
+        )
+        for edition in data.editions
+    )
+    return songs, editions
 
 
 def write_dataset_file(
@@ -328,6 +352,11 @@ def write_dataset_file(
             raise DatasetError(
                 f"internal error writing {data.chart}: not a configured hitlist"
             )
+        if _shape(reread) != _shape(data):
+            raise DatasetError(
+                f"internal error writing {data.chart}: the re-read file does not "
+                "match the data written"
+            )
         os.replace(tmp, path)
     except BaseException:
         tmp.unlink(missing_ok=True)
@@ -347,7 +376,9 @@ def unknown_fields(path: Path) -> list[str]:
 
     The reader ignores them, so a rewrite through ``dump_dataset`` would
     silently drop them; callers that rewrite a file check this first. The
-    file is assumed to have passed the reader already.
+    file is assumed to have passed the reader already. It is re-parsed here
+    as raw JSON because the reader's typed model has nowhere to keep fields
+    it does not know.
     """
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     found = [

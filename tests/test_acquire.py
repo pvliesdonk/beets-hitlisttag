@@ -413,3 +413,14 @@ class TestSymlinkedDatasetFile:
         assert result.error is None
         assert link.is_symlink()
         assert '"year": 2001' in target.read_text(encoding="utf-8")
+
+
+class TestPrReviewMinting:
+    def test_unicode_digit_existing_id_does_not_crash_minting(self):
+        existing = _existing({"²": ("A", "x")})
+        data, new = merge_acquired(
+            existing, "fake", ["year"], [_acq(2001, ("B", "y"))], SRC, log
+        )
+        assert _ids(data, 2001) == ["1"]
+        assert list(data.songs) == ["1", "²"]
+        assert new == 1

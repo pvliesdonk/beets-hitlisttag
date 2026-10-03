@@ -22,6 +22,7 @@ from .dataset import (
     HitlistData,
     Song,
     _id_sort_key,
+    _is_numeric_id,
     unknown_fields,
     write_dataset_file,
 )
@@ -71,7 +72,7 @@ def merge_acquired(
             continue
         index[key] = sid
 
-    next_id = max((int(sid) for sid in songs if sid.isdigit()), default=0) + 1
+    next_id = max((int(sid) for sid in songs if _is_numeric_id(sid)), default=0) + 1
     new_songs = 0
     for edition in acquired:
         used: set[str] = set()
@@ -179,6 +180,9 @@ def acquire_chart(
         return result
 
     def key(axes: Mapping[str, int]) -> tuple[int, ...]:
+        # The reader guarantees every configured axis on a held edition. A ref
+        # from the ingestor may lack one; .get keeps that from raising here,
+        # and acquire_edition then rejects the ref as an IngestError.
         return tuple(axes.get(name, 0) for name in axis_names)
 
     if existing is None and path.exists():

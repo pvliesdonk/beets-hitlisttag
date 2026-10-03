@@ -148,3 +148,27 @@ class TestWriteDatasetFile:
         assert len(seen) == 1
         assert seen[0].endswith(".json.tmp")
         assert seen[0].startswith(".")
+
+
+class TestPrReviewFixes:
+    def test_unicode_digit_ids_sort_as_text(self):
+        # "²".isdigit() is True but int("²") raises.
+        assert sorted(["²", "10", "2"], key=_id_sort_key) == ["2", "10", "²"]
+
+    def test_reread_must_match_what_was_written(self, tmp_path, monkeypatch):
+        # A serializer that emits a *valid* but different file is caught.
+        target = tmp_path / "top2000.json"
+        target.write_text(
+            '{"chart": "top2000", "songs": {}, "editions": []}\n', "utf-8"
+        )
+        before = target.read_bytes()
+        real_dump = dataset_module.dump_dataset
+
+        def lossy(data):
+            return real_dump(data).replace('"Halo"', '"Not Halo"')
+
+        monkeypatch.setattr(dataset_module, "dump_dataset", lossy)
+        with pytest.raises(DatasetError, match="does not match"):
+            write_dataset_file(_small(source=target), target, HITLISTS, log)
+        assert target.read_bytes() == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["top2000.json"]
