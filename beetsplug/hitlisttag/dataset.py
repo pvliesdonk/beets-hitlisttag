@@ -306,7 +306,8 @@ def write_dataset_file(
     and leaves ``path`` byte-for-byte as it was. The temp name ends in
     ``.json.tmp`` so a stale one is never read as a dataset file.
     """
-    path = Path(path)
+    # Write through a symlinked file to its target, so the link survives.
+    path = Path(path).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
     fd, tmp_name = tempfile.mkstemp(
@@ -331,3 +332,41 @@ def write_dataset_file(
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+_DOCUMENTED_FIELDS = {
+    "top-level": {"chart", "songs", "editions"},
+    "song": {"artist", "title"},
+    "edition": {"axes", "size", "entries"},
+    "entry": {"position", "songs"},
+}
+
+
+def unknown_fields(path: Path) -> list[str]:
+    """Fields in a dataset file that the format does not document.
+
+    The reader ignores them, so a rewrite through ``dump_dataset`` would
+    silently drop them; callers that rewrite a file check this first. The
+    file is assumed to have passed the reader already.
+    """
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    found = [
+        f"top-level {k!r}" for k in raw if k not in _DOCUMENTED_FIELDS["top-level"]
+    ]
+    for sid, song in raw.get("songs", {}).items():
+        found += [
+            f"song {sid!r} {k!r}" for k in song if k not in _DOCUMENTED_FIELDS["song"]
+        ]
+    for i, edition in enumerate(raw.get("editions", [])):
+        found += [
+            f"edition {i} {k!r}"
+            for k in edition
+            if k not in _DOCUMENTED_FIELDS["edition"]
+        ]
+        for entry in edition.get("entries", []):
+            found += [
+                f"edition {i} entry {k!r}"
+                for k in entry
+                if k not in _DOCUMENTED_FIELDS["entry"]
+            ]
+    return found

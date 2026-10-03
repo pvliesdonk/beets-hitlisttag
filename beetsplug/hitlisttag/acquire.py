@@ -22,6 +22,7 @@ from .dataset import (
     HitlistData,
     Song,
     _id_sort_key,
+    unknown_fields,
     write_dataset_file,
 )
 from .ingest import AcquiredEdition, EditionRef, IngestError, Ingestor, acquire_edition
@@ -180,8 +181,18 @@ def acquire_chart(
     def key(axes: Mapping[str, int]) -> tuple[int, ...]:
         return tuple(axes.get(name, 0) for name in axis_names)
 
+    if existing is None and path.exists():
+        result.error = (
+            f"{path} exists but does not hold {chart}; move it aside or fix "
+            "its 'chart' field"
+        )
+        return result
+
     held = {key(e.axes) for e in existing.editions} if existing else set()
     result.held = len(held)
+
+    # Ingestor phase: only the contract's own failures are reported; any
+    # other exception from the ingestor propagates (#99).
     try:
         listed: list[EditionRef] = []
         for ref in ingestor.editions():
@@ -191,19 +202,30 @@ def acquire_chart(
         missing = [ref for ref in listed if key(ref.axes) not in held]
         if not missing:
             return result
+        if existing is not None:
+            dropped = unknown_fields(existing.source)
+            if dropped:
+                result.error = (
+                    f"{existing.source} holds fields chartsacquire would drop "
+                    f"({', '.join(dropped)}); remove them, or keep this chart "
+                    "hand-maintained"
+                )
+                return result
         acquired = [acquire_edition(ingestor, ref) for ref in missing]
-        data, new_songs = merge_acquired(
-            existing, chart, axis_names, acquired, path, log
-        )
-        write_dataset_file(data, path, hitlists, log)
     except IngestError as err:
-        result.error = str(err)
-        return result
-    except DatasetError as err:
         result.error = str(err)
         return result
     except ValueError as err:
         result.error = f"ingestor for {chart} broke its contract: {err}"
+        return result
+
+    data, new_songs = merge_acquired(existing, chart, axis_names, acquired, path, log)
+
+    # Write phase: only now are OS errors about the dataset file.
+    try:
+        write_dataset_file(data, path, hitlists, log)
+    except DatasetError as err:
+        result.error = str(err)
         return result
     except OSError as err:
         result.error = f"cannot write {path}: {err}"

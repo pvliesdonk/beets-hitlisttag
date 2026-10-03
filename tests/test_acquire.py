@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
+
+import pytest
 
 from beetsplug.hitlisttag.acquire import ChartResult, acquire_chart, merge_acquired
 from beetsplug.hitlisttag.dataset import Edition, Entry, HitlistData, Song, read_dataset
@@ -329,3 +332,84 @@ class TestChartResultLines:
         assert r.lines(["year"])[-1] == (
             "x: 2 editions in the file are not listed by the source (1990–1991); kept"
         )
+
+
+class TestFinalReviewFixes:
+    """Findings from the whole-branch review, pinned before their fixes."""
+
+    def test_existing_file_for_another_chart_is_not_overwritten(self, tmp_path):
+        # Important 1: <chart>.json exists but holds a different chart.
+        path = tmp_path / "fake.json"
+        path.write_text(
+            '{"chart": "other", "songs": {}, "editions": []}\n', encoding="utf-8"
+        )
+        before = path.read_bytes()
+        ing = FakeIngestor({2001: [("A", "x")]})
+        result = acquire_chart(ing, ["year"], None, path, HITLISTS, log)
+        assert "exists but does not hold fake" in result.error
+        assert path.read_bytes() == before
+        assert ing.fetched == []
+
+    def test_os_error_from_ingestor_is_not_reported_as_write_failure(self, tmp_path):
+        # Important 2: an ingestor's network error propagates (#99 contract).
+        class Offline(FakeIngestor):
+            def fetch(self, ref):
+                raise ConnectionError("connection refused")
+
+        path = tmp_path / "fake.json"
+        with pytest.raises(ConnectionError):
+            acquire_chart(Offline({2001: []}), ["year"], None, path, HITLISTS, log)
+        assert not path.exists()
+        assert list(tmp_path.iterdir()) == []
+
+    def test_unknown_fields_in_existing_file_block_the_write(self, tmp_path):
+        # Important 3 (re-graded): extras would be silently dropped.
+        path = tmp_path / "fake.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "chart": "fake",
+                    "note": "hand curated",
+                    "songs": {"1": {"artist": "A", "title": "x", "mbid": "abc"}},
+                    "editions": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        before = path.read_bytes()
+        result = acquire_chart(
+            FakeIngestor({2001: [("A", "x")]}),
+            ["year"],
+            _read(tmp_path),
+            path,
+            HITLISTS,
+            log,
+        )
+        assert "would drop" in result.error
+        assert "'note'" in result.error and "'mbid'" in result.error
+        assert path.read_bytes() == before
+
+
+class TestSymlinkedDatasetFile:
+    def test_symlink_kept_and_target_updated(self, tmp_path):
+        # Important 5 (re-graded): replacing must write through the link.
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        target = real_dir / "fake.json"
+        target.write_text(
+            '{"chart": "fake", "songs": {}, "editions": []}\n', encoding="utf-8"
+        )
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        link = data_dir / "fake.json"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported here")
+        existing = read_dataset(data_dir, HITLISTS, log)[0]
+        result = acquire_chart(
+            FakeIngestor({2001: [("A", "x")]}), ["year"], existing, link, HITLISTS, log
+        )
+        assert result.error is None
+        assert link.is_symlink()
+        assert '"year": 2001' in target.read_text(encoding="utf-8")
