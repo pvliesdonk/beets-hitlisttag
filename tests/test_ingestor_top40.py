@@ -57,7 +57,11 @@ def _item(pos, artist, title, full=None, extra=""):
     )
 
 
-def _week_page(positions=range(1, SIZE + 1), names=None, title_text="") -> str:
+def _week_page(
+    positions=range(1, SIZE + 1),
+    names=None,
+    title_text="Top 40-lijst van week 20, 1990",
+) -> str:
     names = names or {}
     items = [
         _item(p, *names.get(p, (f"Pretend Act {p}", f"Made Up Tune {p}")))
@@ -407,6 +411,18 @@ def test_real_cached_week_pages(caplog):
             edition = ing.fetch(EditionRef({"year": year, "week": week}))
             assert len(edition.entries) == SIZE, page
             assert all("top40.nl/title" in e.source_ids for e in edition.entries)
+            # Restored names equal the image title (true for every real entry).
+            shown = {
+                item.position: item.image_title
+                for item in top40nl.parse_list(page.read_text("utf-8"))
+                if item.position is not None
+            }
+            for entry in edition.entries:
+                song = entry.songs[0]
+                assert f"{song.artist} - {song.title}" == shown[entry.position], (
+                    page,
+                    entry.position,
+                )
     assert "cannot restore" not in caplog.text
     for page in pages:
         year = int(page.parent.name)
@@ -419,3 +435,31 @@ def test_real_cached_week_pages(caplog):
                 )
             }
             assert weeks == {LAST_WEEK[year - 1]}, page
+
+
+class TestReviewFixes118:
+    """Findings from #118's whole-branch review."""
+
+    @pytest.mark.parametrize("week", [0, 54])
+    def test_out_of_range_latest_week_is_an_ingest_error(self, week):
+        site = Site(
+            {
+                "/top40": _latest(TABLE_END + 1, week),
+                f"/top40/{TABLE_END + 1}/week-1": _week1(TABLE_END + 1, 52),
+            }
+        )
+        with pytest.raises(
+            IngestError, match=f"cannot list Top 40 weeks: .*week {week}\\b"
+        ):
+            Top40Ingestor(get=site).editions()
+
+    def test_page_for_another_week_is_an_ingest_error(self):
+        page = _week_page(title_text="Top 40-lijst van week 21, 1990")
+        site = Site({"/top40/1990/week-20": page})
+        with pytest.raises(IngestError, match="Top 40 1990 week 20: .*week 21, 1990"):
+            Top40Ingestor(get=site).fetch(EditionRef({"year": 1990, "week": 20}))
+
+    def test_page_without_a_week_title_is_an_ingest_error(self):
+        site = Site({"/top40/1990/week-20": _week_page(title_text="Top40.nl")})
+        with pytest.raises(IngestError, match="Top 40 1990 week 20: .*title"):
+            Top40Ingestor(get=site).fetch(EditionRef({"year": 1990, "week": 20}))

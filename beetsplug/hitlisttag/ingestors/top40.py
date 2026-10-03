@@ -139,6 +139,11 @@ class Top40Ingestor:
             why = "not found" if html is None else "has no 'week N, YYYY' title"
             raise IngestError(f"cannot list Top 40 weeks: /top40 {why}")
         latest_week, latest_year = int(match.group(1)), int(match.group(2))
+        if not 1 <= latest_week <= 53:
+            raise IngestError(
+                f"cannot list Top 40 weeks: /top40 shows week {latest_week} of "
+                f"{latest_year}, outside 1–53"
+            )
         if latest_year < max(LAST_WEEK):
             raise IngestError(
                 f"cannot list Top 40 weeks: the site's latest chart ({latest_year} "
@@ -190,6 +195,15 @@ class Top40Ingestor:
         html = self._page(f"/top40/{year}/week-{week}")
         if html is None:
             raise IngestError(f"{where}: page not found")
+        # The page must be the chart asked for: a redirect to another week
+        # would otherwise be stored under this one.
+        shown = _LATEST.search(html)
+        if shown is None:
+            raise IngestError(f"{where}: the page has no 'week N, YYYY' title")
+        if (int(shown.group(2)), int(shown.group(1))) != (year, week):
+            raise IngestError(
+                f"{where}: the page is for week {shown.group(1)}, {shown.group(2)}"
+            )
         items = [item for item in top40nl.parse_list(html) if item.position is not None]
         problems = top40nl.position_problems([item.position for item in items], SIZE)
         if problems:
