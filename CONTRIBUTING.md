@@ -54,6 +54,14 @@ made-up or trimmed fixtures only: never commit a real chart listing,
 since complete chart listings generally can't be redistributed (see
 [The chart dataset](README.md#the-chart-dataset)).
 
+For parser work against a real site, set `HITLISTTAG_HTTP_CACHE` to a
+directory **outside this repository**. Every page `Fetcher` fetches is kept
+there as a plain file under the site's host and path, and later runs read
+it from there instead of the network; delete the directory to refresh it.
+Those files are real chart listings, so they must never be committed. A
+saved page is also what the parser's real-page check runs against before a
+merge.
+
 ## Releases
 
 The version comes from the git tag via `hatch-vcs`. Publishing a GitHub Release

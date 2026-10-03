@@ -128,15 +128,99 @@ To try the whole chain, point `dataset_dir` at a scratch folder and run
 
 ## Fetch from a website
 
-If your source is a web page or an API rather than local files:
+If your source is a web page or an API, fetch it with `Fetcher` from
+`beetsplug.hitlisttag.fetch`. It is what the bundled ingestors use, and it
+takes care of the parts that are easy to get wrong:
 
-- Catch network errors and raise `IngestError` from them. With
-  `requests`, catch `requests.RequestException`, as the bundled
-  `top2000` ingestor does. An uncaught connection error stops
-  `chartsacquire` with a traceback instead of a clean failure line.
-- Send a User-Agent that names your script and gives a way to contact
-  you.
-- Check the site's terms before you automate requests to it.
+- requests are at least one second apart (`Fetcher(min_interval=2.0)` for
+  slower);
+- connection errors, timeouts, 429 and 5xx responses are retried, honouring
+  the site's `Retry-After`;
+- it sends a User-Agent naming this plugin and its homepage
+  (`Fetcher(user_agent="my-script/1.0 (me@example.org)")` to name yours);
+- every failure becomes an `IngestError`, so `chartsacquire` reports it as
+  a clean failure line.
+
+`get(url)` returns the page text, or `None` when the page does not exist
+(HTTP 404). What a missing page means is up to your ingestor: below, it
+marks the end of the years the site has.
+
+This example reads a site that publishes one CSV file per year:
+
+```python
+"""Ingestor for the 'zwaarstelijst' hitlist, one CSV file per year."""
+
+import csv
+import io
+
+from beetsplug.hitlisttag.fetch import Fetcher
+from beetsplug.hitlisttag.ingest import (
+    AcquiredEdition,
+    EditionRef,
+    IngestError,
+    RawEntry,
+    RawSong,
+)
+
+BASE = "https://charts.example.org/zwaarstelijst"
+FIRST_YEAR = 2005
+SIZE = 100
+
+
+class ZwaarsteIngestor:
+    chart = "zwaarstelijst"
+    axes = ("year",)
+
+    def __init__(self):
+        self._fetcher = Fetcher()
+        self._pages = {}
+
+    def _csv(self, year):
+        # Each page is fetched once per run, even though editions() and
+        # fetch() both need it.
+        if year not in self._pages:
+            self._pages[year] = self._fetcher.get(f"{BASE}/{year}.csv")
+        return self._pages[year]
+
+    def editions(self):
+        years = []
+        year = FIRST_YEAR
+        while self._csv(year) is not None:
+            years.append(year)
+            year += 1
+        return [EditionRef({"year": y}) for y in years]
+
+    def fetch(self, ref):
+        year = ref.axes["year"]
+        text = self._csv(year)
+        if text is None:
+            raise IngestError(f"the site has no list for {year}")
+        try:
+            entries = tuple(
+                RawEntry(int(row["position"]), (RawSong(row["artist"], row["title"]),))
+                for row in csv.DictReader(io.StringIO(text))
+            )
+        except (KeyError, ValueError) as err:
+            raise IngestError(f"malformed row in {year}: {err}") from err
+        return AcquiredEdition(ref, SIZE, entries)
+
+
+INGESTOR = ZwaarsteIngestor()
+```
+
+If the site's certificate chain is incomplete, pass the missing
+intermediate certificate as `Fetcher(extra_ca_pem=...)`; verification stays
+on. Never turn verification off.
+
+While you work on a parser, set `HITLISTTAG_HTTP_CACHE` to a directory
+outside your projects. `Fetcher` then keeps every page it fetches there as
+a plain file, under the site's host and path, and serves it from there on
+the next run, so you can re-run as often as you like without touching the
+site. Delete the directory to fetch fresh copies. Leave the variable unset
+for normal runs.
+
+Check the site's terms and its `robots.txt` before you automate requests
+to it.
 
 ## Reference
 
