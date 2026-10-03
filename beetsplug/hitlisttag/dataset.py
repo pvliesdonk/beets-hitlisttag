@@ -26,6 +26,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -251,3 +253,81 @@ def _parse_entries(
             resolved.append(songs[sid])
         entries.append(Entry(position=pos, songs=resolved))
     return entries
+
+
+def _id_sort_key(song_id: str) -> tuple[int, int, str]:
+    """Numeric ids first, in numeric order; any other id after, by text."""
+    if song_id.isdigit():
+        return (0, int(song_id), "")
+    return (1, 0, song_id)
+
+
+def dump_dataset(data: HitlistData) -> str:
+    """Serialize ``data`` in the documented on-disk shape.
+
+    Songs are ordered by id (numerically where numeric) and entries by
+    position; editions keep the order of ``data.editions``. UTF-8 text with
+    non-ASCII kept readable, 2-space indent, trailing newline.
+    """
+    payload = {
+        "chart": data.chart,
+        "songs": {
+            sid: {"artist": song.artist, "title": song.title}
+            for sid, song in sorted(
+                data.songs.items(), key=lambda item: _id_sort_key(item[0])
+            )
+        },
+        "editions": [
+            {
+                "axes": dict(edition.axes),
+                "size": edition.size,
+                "entries": [
+                    {"position": entry.position, "songs": [s.id for s in entry.songs]}
+                    for entry in sorted(edition.entries, key=lambda e: e.position)
+                ],
+            }
+            for edition in data.editions
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def write_dataset_file(
+    data: HitlistData,
+    path: Path,
+    hitlists: Mapping[str, list[str]],
+    log: logging.Logger,
+) -> None:
+    """Atomically replace ``path`` with ``data``, or leave it untouched.
+
+    The text goes to a temp file in the same directory, which is then
+    re-read with the dataset reader itself; only a file the reader accepts
+    replaces ``path``. Any failure before the replace removes the temp file
+    and leaves ``path`` byte-for-byte as it was. The temp name ends in
+    ``.json.tmp`` so a stale one is never read as a dataset file.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.stem}.", suffix=".json.tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(dump_dataset(data))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, mode)
+        try:
+            reread = _read_file(tmp, hitlists, log)
+        except DatasetError as err:
+            raise DatasetError(f"internal error writing {data.chart}: {err}") from err
+        if reread is None:
+            raise DatasetError(
+                f"internal error writing {data.chart}: not a configured hitlist"
+            )
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
