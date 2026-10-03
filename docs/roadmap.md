@@ -185,14 +185,26 @@ throughout.
    refinement creates it. So milestone 10 is no longer last in full: its
    first raw-published ingestor is pulled ahead of this milestone, while
    its upkeep and remaining-coverage parts stay where they were. The
-   milestone numbers are names, not an order.
+   milestone numbers are names, not an order. *Edge repointed
+   (2026-10-03):* milestone 10's refinement named the Top 100 year
+   list rather than the Top 40 weekly as the first raw-published
+   ingestor (#72 ← [#117](https://github.com/pvliesdonk/beets-hitlisttag/issues/117)).
+   The owner says either serves, as the two lists are different
+   published views of the same data (`stated`); the Top 100 has far
+   fewer editions to fetch, so it is the cheaper first proof
+   (`derived`). If the Top 40 ingestor lands first, the edge moves to it.
 9. **Matching beyond exact** after the ontology: fuzzy and interactive
    matching are only worth their complexity for the residue left after
    normalization plus aliases, and the earlier milestones' unmatched-track
    reporting quantifies that residue before we build against it.
 10. **Chart coverage and upkeep** last: breadth (Top 40 weekly, Top 100) and
     cadence are operational concerns best not debugged at the same time as
-    core design.
+    core design. *Refined 2026-10-03:* within the milestone, a one-day
+    source spike on top40.nl gates both ingestors, because the terms of
+    the one source both charts share decide whether either is buildable.
+    The missing-report fix
+    ([#119](https://github.com/pvliesdonk/beets-hitlisttag/issues/119))
+    needs only the milestone 6 dataset and can be taken at any time.
 
 The order is a lean, not a wall. The standing example — pulling milestone
 8's catalog seeding earlier so milestone 6 had realistic data — lapsed
@@ -294,7 +306,27 @@ remain. `derived`.
   issue (`evidenced`:
   [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98)); the
   direction consequences are recorded under *Variant policy* and the
-  ordering argument. *Top 2000 first* holds.
+  ordering argument. *Top 2000 first* holds. *Ticketed for the Top 40 /
+  Top 100 (2026-10-03, milestone 10 refinement):* research issue
+  [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116) on
+  top40.nl, the owner's candidate source for both lists, with a one-day
+  appetite (agent proposal, confirmed by the owner). It blocks both
+  ingestors. It applies the milestone 7 lesson up front: entries are
+  checked by name and shape, not counted. If the terms rule top40.nl out,
+  the argument that milestone 10's first ingestor feeds milestone 8
+  needs a new source or a new order. That goes here as a change of
+  direction, not as a request for more time.
+- **Partial progress on many-fetch charts.** `chartsacquire` fetches every
+  missing edition before writing and discards the lot on one failed fetch
+  (`evidenced`: `beetsplug/hitlisttag/acquire.py`, `acquire_chart`). That
+  costs nothing for the one-fetch Top 2000 and may stop a chart needing
+  hundreds of fetches from ever completing a first population. Keeping
+  fetched editions across a failure would revise the all-or-nothing
+  write recorded in History (2026-10-03), so the owner decides it.
+  Resolved by: the source spike
+  ([#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116)),
+  whose fetch count decides whether a feature is filed. `stated` (record
+  as an unknown, 2026-10-03); `derived` (the analysis).
 - **Ingestor plug-in mechanism.** How a third party's ingestor is found —
   Python entry points, a config-pointed module path, or both — is a
   feature-level decision the user deliberately left to the contract
@@ -312,7 +344,12 @@ remain. `derived`.
   data. This unknown is still open; a raw-published chart answers it.
   Resolved by: refining milestone 10 (#74), whose first raw-published
   ingestor feeds milestone 8's refinement. The owner's candidate source
-  for it, the top40.nl Top 100 year lists, is noted on #74.
+  for it, the top40.nl Top 100 year lists, is noted on #74. *Pointer
+  updated (2026-10-03):* resolved by the Top 100 year-list ingestor
+  ([#117](https://github.com/pvliesdonk/beets-hitlisttag/issues/117)),
+  or the Top 40 weekly one
+  ([#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118))
+  if it lands first. Either serves (`stated`).
 - **Residual miss-rate.** Whether fuzzy matching is needed at meaningful
   scale once exact-normalized lookup plus aliases exist; if the residue is
   tiny, milestone 9 shrinks — a possible change of direction, recorded here
@@ -528,3 +565,26 @@ remain. `derived`.
   not. Four minor findings remain, tracked in #114. Next on the graph:
   refining milestone 10 (#74), which milestone 8's refinement now waits
   on. `derived`.
+- 2026-10-03 — milestone 10 (chart coverage and upkeep) refined into five
+  work items and one research spike: the top40.nl source spike (#116),
+  the Top 100 year-list ingestor (#117), the Top 40 weekly ingestor
+  (#118), the missing-report fix against declared edition sizes (#119),
+  documentation for the new charts and routine upkeep (#120), and an
+  end-to-end pin of the acceptance criterion (#121). The four
+  `chartsacquire` robustness gaps (#114) join this milestone, since
+  routine runs over three bundled charts make one ingestor's crash
+  stopping the rest matter. Four decisions from the owner this session,
+  each from an agent proposal: #72 now waits on the Top 100 ingestor
+  rather than the Top 40, either serving since both lists are views of
+  the same data; the partial-progress question is recorded as an
+  unknown for the spike, not filed as a feature; #114 moves in; the
+  spike's appetite is one day. Coverage against the frozen criterion:
+  *populated from public sources* is #116–#118; *kept current with
+  routine runs* rests on milestone 7's incremental refresh plus #114,
+  #120, and whatever the partial-progress unknown turns up; the
+  missing-report clause is #119; #121 pins both. Cross-milestone check:
+  nothing outside the milestone blocks these items beyond the shipped
+  contract and dataset (#99, #75); the one outgoing edge is #72 ← #117.
+  The milestone description says "remaining bundled charts" but the
+  criterion names only the Top 40 and Top 100; zwaarstelijst and kerst
+  stay as recorded under their own unknown. No change to direction.
