@@ -13,14 +13,16 @@ from there afterwards, without touching the site.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import ssl
+import tempfile
 import time
 from collections.abc import Callable
 from importlib import metadata
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import certifi
 import requests
@@ -36,6 +38,35 @@ TIMEOUT = 30
 """Seconds per request."""
 
 _RETRY_STATUSES = (429, 500, 502, 503, 504)
+
+_MAX_NAME = 200
+"""Bytes allowed for a cache file name before it is shortened (suffix excluded)."""
+
+
+def _encode(segment: str) -> str:
+    """A URL piece made safe as one file name; existing %-escapes are kept."""
+    if segment in (".", ".."):
+        return segment.replace(".", "%2E")
+    return quote(segment, safe="-_.~%")
+
+
+def _cache_base(root: Path, url: str) -> Path:
+    """Where ``url`` is cached under ``root``, without the suffix.
+
+    ``https://host/a/b?q`` maps to ``root/host/a/b@q``; the root path maps to
+    ``index``. Every piece is encoded so it is one safe file name, and a name
+    too long for common filesystems is shortened with a hash.
+    """
+    parts = urlsplit(url)
+    segments = [_encode(s) for s in parts.path.split("/") if s] or ["index"]
+    name = segments[-1]
+    if parts.query:
+        name += "@" + _encode(parts.query)
+    if len(name.encode()) > _MAX_NAME:
+        digest = hashlib.sha256(name.encode()).hexdigest()[:16]
+        name = f"{name[:100]}-{digest}"
+    return root.joinpath(_encode(parts.netloc), *segments[:-1], name)
+
 
 _log = logging.getLogger("beets.hitlisttag")
 
@@ -114,6 +145,24 @@ class Fetcher:
 
     def get(self, url: str) -> str | None:
         """The page text; ``None`` for a 404; ``IngestError`` otherwise."""
+        base = None
+        if self._cache_dir is not None:
+            base = _cache_base(self._cache_dir, url)
+            page = base.with_name(base.name + ".page")
+            if page.is_file():
+                _log.debug(f"cache hit: {url}")
+                return page.read_text(encoding="utf-8")
+            if base.with_name(base.name + ".404").is_file():
+                _log.debug(f"cache hit (404): {url}")
+                return None
+            _log.debug(f"cache miss: {url}")
+        text = self._fetch(url)
+        if base is not None:
+            self._store(base, text)
+        return text
+
+    def _fetch(self, url: str) -> str | None:
+        """One paced network GET, outcomes mapped as ``get`` documents."""
         self._pace()
         try:
             response = self._session.get(url, timeout=TIMEOUT)
@@ -130,6 +179,24 @@ class Fetcher:
         if response.status_code != 200:
             raise IngestError(f"cannot fetch {url}: HTTP {response.status_code}")
         return response.text
+
+    def _store(self, base: Path, text: str | None) -> None:
+        """Write a page (or a 404 marker) atomically: temp file, then replace."""
+        target = base.with_name(base.name + (".404" if text is None else ".page"))
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".tmp-")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    fh.write(text or "")
+                os.replace(tmp, target)
+            except BaseException:
+                Path(tmp).unlink(missing_ok=True)
+                raise
+        except OSError as err:
+            raise IngestError(
+                f"cannot use the development cache at {self._cache_dir}: {err}"
+            ) from err
 
     def _pace(self) -> None:
         """Wait until ``min_interval`` has passed since the last request began."""

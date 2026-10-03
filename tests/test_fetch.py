@@ -12,7 +12,12 @@ import pytest
 import requests
 from urllib3.util.retry import Retry
 
-from beetsplug.hitlisttag.fetch import Fetcher, default_user_agent
+from beetsplug.hitlisttag.fetch import (
+    CACHE_ENV,
+    Fetcher,
+    _cache_base,
+    default_user_agent,
+)
 from beetsplug.hitlisttag.ingest import IngestError
 
 
@@ -231,3 +236,110 @@ class TestExtraCA:
     def test_without_extra_ca_no_custom_context(self):
         adapter = make()._session.get_adapter("https://www.top40.nl/")
         assert "ssl_context" not in adapter.poolmanager.connection_pool_kw
+
+
+class TestCache:
+    def test_miss_writes_page_under_host_and_path(self, server, tmp_path):
+        server.routes["/top40/1965/week-1"] = [(200, "week one")]
+        make(cache_dir=tmp_path).get(server.base + "/top40/1965/week-1")
+        host = server.base.removeprefix("http://").replace(":", "%3A")
+        page = tmp_path / host / "top40" / "1965" / "week-1.page"
+        assert page.read_text(encoding="utf-8") == "week one"
+
+    def test_hit_makes_no_request_and_does_not_wait(self, server, tmp_path):
+        server.routes["/a"] = [(200, "cached")]
+        make(cache_dir=tmp_path).get(server.base + "/a")
+        clock = FakeClock()
+        fetcher = make(clock, cache_dir=tmp_path)
+        assert fetcher.get(server.base + "/a") == "cached"
+        assert fetcher.get(server.base + "/a") == "cached"
+        assert len(server.requests) == 1
+        assert clock.slept == []
+
+    def test_404_is_stored_as_marker_and_served_offline(self, server, tmp_path):
+        assert make(cache_dir=tmp_path).get(server.base + "/top40/1965/week-60") is None
+        marker = next(tmp_path.rglob("week-60.404"))
+        assert marker.read_text() == ""
+        assert make(cache_dir=tmp_path).get(server.base + "/top40/1965/week-60") is None
+        assert len(server.requests) == 1
+
+    def test_errors_are_not_cached(self, server, tmp_path):
+        server.routes["/e"] = [(500, "")]
+        with pytest.raises(IngestError):
+            make(cache_dir=tmp_path).get(server.base + "/e")
+        assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+
+    def test_page_and_directory_of_same_name_coexist(self, server, tmp_path):
+        server.routes["/top40"] = [(200, "index")]
+        server.routes["/top40/1965/week-1"] = [(200, "w1")]
+        fetcher = make(cache_dir=tmp_path)
+        assert fetcher.get(server.base + "/top40") == "index"
+        assert fetcher.get(server.base + "/top40/1965/week-1") == "w1"
+        again = make(cache_dir=tmp_path)
+        assert again.get(server.base + "/top40") == "index"
+        assert again.get(server.base + "/top40/1965/week-1") == "w1"
+
+    def test_non_ascii_round_trips(self, server, tmp_path):
+        text = "Zoë Livay · Mötley Crüe · Beyoncé 🎵"
+        server.routes["/u"] = [(200, text)]
+        assert make(cache_dir=tmp_path).get(server.base + "/u") == text
+        assert make(cache_dir=tmp_path).get(server.base + "/u") == text
+
+    def test_env_variable_activates_cache(self, server, tmp_path, monkeypatch):
+        monkeypatch.setenv(CACHE_ENV, str(tmp_path))
+        server.routes["/a"] = [(200, "x")]
+        make().get(server.base + "/a")
+        assert len(list(tmp_path.rglob("a.page"))) == 1
+
+    def test_no_cache_leaves_filesystem_untouched(self, server, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        server.routes["/a"] = [(200, "x")]
+        make().get(server.base + "/a")
+        assert list(tmp_path.iterdir()) == []
+
+    def test_cache_on_a_file_is_ingest_error(self, server, tmp_path):
+        not_a_dir = tmp_path / "cache"
+        not_a_dir.write_text("oops")
+        server.routes["/a"] = [(200, "x")]
+        with pytest.raises(IngestError, match="development cache"):
+            make(cache_dir=not_a_dir).get(server.base + "/a")
+
+
+class TestCacheNames:
+    def test_root_path_is_index(self, tmp_path):
+        assert (
+            _cache_base(tmp_path, "https://h.example")
+            == tmp_path / "h.example" / "index"
+        )
+        assert (
+            _cache_base(tmp_path, "https://h.example/")
+            == tmp_path / "h.example" / "index"
+        )
+
+    def test_query_is_appended_after_at(self, tmp_path):
+        base = _cache_base(
+            tmp_path,
+            "https://nl.wikipedia.org/w/index.php"
+            "?title=Lijst_van_Radio_2-Top_2000%27s&action=raw",
+        )
+        assert base.parent == tmp_path / "nl.wikipedia.org" / "w"
+        assert (
+            base.name
+            == "index.php@title%3DLijst_van_Radio_2-Top_2000%27s%26action%3Draw"
+        )
+
+    def test_dot_segments_stay_under_root(self, tmp_path):
+        base = _cache_base(tmp_path, "https://h.example/a/../../etc/passwd")
+        assert base.resolve().is_relative_to(tmp_path.resolve())
+        assert ".." not in base.relative_to(tmp_path).parts
+
+    def test_long_names_are_shortened_deterministically(self, tmp_path):
+        url = "https://h.example/search?q=" + "x" * 500
+        first = _cache_base(tmp_path, url)
+        assert len(first.name.encode()) <= 200
+        assert first == _cache_base(tmp_path, url)
+        assert first != _cache_base(tmp_path, url + "y")
+
+    def test_unsafe_characters_are_encoded(self, tmp_path):
+        base = _cache_base(tmp_path, "https://h.example:8080/a:b")
+        assert base == tmp_path / "h.example%3A8080" / "a%3Ab"
