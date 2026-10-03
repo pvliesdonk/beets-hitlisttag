@@ -4,14 +4,17 @@
 acquired editions, reusing an existing id when a song's normalized artist and
 title already exist in the chart's file, and merges the editions in.
 ``acquire_chart`` is the per-chart flow behind ``beet chartsacquire``: it
-fetches only the editions the file does not hold and writes the result
-atomically, so a failure leaves the file as it was.
+fetches only the editions the file does not hold, skips an edition that
+fails (stopping after a few failures in a row), and writes what it acquired
+atomically, at checkpoints and at the end, so whatever ends a run the file
+holds every edition acquired up to its last successful write.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -136,6 +139,13 @@ def _plural(n: int, word: str, plural: str | None = None) -> str:
     return f"{n:,} {word}" if n == 1 else f"{n:,} {plural or word + 's'}"
 
 
+CHECKPOINT_SECONDS = 60
+"""Seconds of fetching after which acquired editions are written."""
+
+STOP_AFTER_FAILURES = 3
+"""Failed editions in a row after which a chart's run stops."""
+
+
 @dataclass
 class ChartResult:
     """Outcome of acquiring one chart, and its printable report."""
@@ -149,42 +159,72 @@ class ChartResult:
     pruned: list[tuple[int, ...]] = field(default_factory=list)
     forced: bool = False
     error: str | None = None
+    failed: list[tuple[EditionRef, str]] = field(default_factory=list)
+    stopped: bool = False
+    not_attempted: int = 0
+    written: bool = False
 
     def lines(self, axis_names: Sequence[str]) -> list[str]:
-        if self.error is not None:
-            return [f"{self.chart}: FAILED — {self.error}; file unchanged"]
-        if not self.acquired and not self.pruned:
-            out = [f"{self.chart}: up to date ({_plural(self.held, 'edition')})"]
-        elif not self.acquired:
-            out = []
-        else:
-            span = ""
-            if len(axis_names) == 1:
-                years = [ref.axes[axis_names[0]] for ref in self.acquired]
-                span = f" ({_ranges(years)})"
-            out = [
+        def span(values: Sequence[int]) -> str:
+            return f" ({_ranges(values)})" if len(axis_names) == 1 and values else ""
+
+        def first_axis(refs: Sequence[EditionRef]) -> list[int]:
+            # A failed ref may lack the axis: a wrong axis name is one reason
+            # an edition fails.
+            if len(axis_names) != 1:
+                return []
+            return [
+                ref.axes[axis_names[0]] for ref in refs if axis_names[0] in ref.axes
+            ]
+
+        out: list[str] = []
+        if self.acquired:
+            out.append(
                 f"{self.chart}: {'re-acquired' if self.forced else 'acquired'} "
                 f"{_plural(len(self.acquired), 'edition')}"
-                f"{span}, {_plural(self.entries, 'entry', 'entries')}, "
+                f"{span(first_axis(self.acquired))}, "
+                f"{_plural(self.entries, 'entry', 'entries')}, "
                 f"{_plural(self.new_songs, 'new song')}"
-            ]
-        if self.pruned:
-            span = ""
-            if len(axis_names) == 1:
-                span = f" ({_ranges([key[0] for key in self.pruned])})"
-            out.append(
-                f"{self.chart}: dropped {_plural(len(self.pruned), 'edition')} "
-                f"not listed by the source{span}"
             )
+        if self.failed:
+            refs = [ref for ref, _reason in self.failed]
+            out.append(
+                f"{self.chart}: {_plural(len(self.failed), 'edition')} failed"
+                f"{span(first_axis(refs))}: {self.failed[-1][1]}; "
+                "a later run retries them"
+            )
+        if self.stopped:
+            out.append(
+                f"{self.chart}: stopped after {STOP_AFTER_FAILURES} failed editions "
+                f"in a row; {_plural(self.not_attempted, 'edition')} not attempted"
+            )
+        if self.error is not None:
+            if self.written and self.pruned:
+                out.append(self._pruned_line(span))
+            kept = (
+                "file keeps the editions acquired before it"
+                if self.written
+                else "file unchanged"
+            )
+            out.append(f"{self.chart}: FAILED — {self.error}; {kept}")
+            return out
+        if not out and not self.pruned:
+            out.append(f"{self.chart}: up to date ({_plural(self.held, 'edition')})")
+        if self.pruned:
+            out.append(self._pruned_line(span))
         if self.unlisted:
-            span = ""
-            if len(axis_names) == 1:
-                span = f" ({_ranges([key[0] for key in self.unlisted])})"
             out.append(
                 f"{self.chart}: {_plural(len(self.unlisted), 'edition')} in the file "
-                f"are not listed by the source{span}; kept"
+                "are not listed by the source"
+                f"{span([key[0] for key in self.unlisted])}; kept"
             )
         return out
+
+    def _pruned_line(self, span: Callable[[Sequence[int]], str]) -> str:
+        return (
+            f"{self.chart}: dropped {_plural(len(self.pruned), 'edition')} "
+            f"not listed by the source{span([key[0] for key in self.pruned])}"
+        )
 
 
 def acquire_chart(
@@ -196,14 +236,19 @@ def acquire_chart(
     log: logging.Logger,
     force: bool = False,
     prune: bool = False,
+    clock: Callable[[], float] = time.monotonic,
 ) -> ChartResult:
     """Acquire the editions ``existing`` lacks and write them to ``path``.
 
     With ``force``, every edition the source lists is re-acquired, replacing
     same-axes editions; with ``prune`` (meaningful only with ``force``),
-    editions the source no longer lists are dropped. All-or-nothing: on any
-    reported failure the file is left as it was. Only exceptions the
-    contract does not anticipate propagate.
+    editions the source no longer lists are dropped. An edition that fails
+    is recorded in ``failed`` and skipped; after ``STOP_AFTER_FAILURES`` in a
+    row the run stops. Acquired editions are written atomically every
+    ``CHECKPOINT_SECONDS`` (by ``clock``), at the end, and before an
+    unexpected exception from the ingestor (Ctrl-C, a bug) propagates; a
+    failed write ends the run. Whatever ends it, the file holds what it held
+    plus every edition acquired up to the last successful write.
     """
     chart = ingestor.chart
     result = ChartResult(chart, forced=force)
@@ -230,8 +275,9 @@ def acquire_chart(
     held = {key(e.axes) for e in existing.editions} if existing else set()
     result.held = len(held)
 
-    # Ingestor phase: only the contract's own failures are reported; any
-    # other exception from the ingestor propagates (#99).
+    # Listing phase: a failure here ends the chart before anything is
+    # fetched or written. Only the contract's own failures are reported;
+    # any other exception from the ingestor propagates (#99).
     try:
         listed: list[EditionRef] = []
         seen: set[EditionRef] = set()
@@ -264,7 +310,6 @@ def acquire_chart(
                     "hand-maintained"
                 )
                 return result
-        acquired = [acquire_edition(ingestor, ref) for ref in missing]
     except IngestError as err:
         result.error = str(err)
         return result
@@ -272,27 +317,74 @@ def acquire_chart(
         result.error = f"ingestor for {chart} broke its contract: {err}"
         return result
 
-    data, new_songs = merge_acquired(
-        existing,
-        chart,
-        axis_names,
-        acquired,
-        path,
-        log,
-        replace=force,
-        keep_only=listed_keys if prune else None,
-    )
+    state = existing
+    pending: list[AcquiredEdition] = []
+    last_write = clock()
 
-    # Write phase: only now are OS errors about the dataset file.
-    try:
-        write_dataset_file(data, path, hitlists, log)
-    except DatasetError as err:
-        result.error = str(err)
-        return result
-    except OSError as err:
-        result.error = f"cannot write {path}: {err}"
-        return result
-    result.acquired = missing
-    result.entries = sum(len(a.entries) for a in acquired)
-    result.new_songs = new_songs
+    def write() -> bool:
+        """Merge ``pending`` into the file; False, with ``error`` set, if that fails."""
+        nonlocal state, last_write
+        data, new_songs = merge_acquired(
+            state,
+            chart,
+            axis_names,
+            pending,
+            path,
+            log,
+            replace=force,
+            keep_only=listed_keys if prune else None,
+        )
+        try:
+            write_dataset_file(data, path, hitlists, log)
+        except DatasetError as err:
+            result.error = str(err)
+        except OSError as err:
+            result.error = f"cannot write {path}: {err}"
+        if result.error is not None:
+            if not result.written:
+                result.pruned = []  # the prune never reached the file
+            return False
+        state = data
+        result.acquired.extend(edition.ref for edition in pending)
+        result.entries += sum(len(edition.entries) for edition in pending)
+        result.new_songs += new_songs
+        result.written = True
+        pending.clear()
+        last_write = clock()
+        return True
+
+    in_a_row = 0
+    for index, ref in enumerate(missing):
+        reason: str | None = None
+        try:
+            edition = acquire_edition(ingestor, ref)
+        except IngestError as err:
+            reason = str(err)
+        except ValueError as err:
+            reason = f"ingestor for {chart} broke its contract: {err}"
+        except BaseException:
+            # Ctrl-C, or a bug in the ingestor: keep what was acquired, then
+            # let the exception through unchanged.
+            if pending:
+                try:
+                    if not write():
+                        log.error(f"{chart}: {result.error}")
+                except Exception as err:
+                    log.error(f"{chart}: could not save acquired editions: {err!r}")
+            raise
+        else:
+            pending.append(edition)
+            in_a_row = 0
+        if reason is not None:
+            result.failed.append((ref, reason))
+            in_a_row += 1
+            if in_a_row >= STOP_AFTER_FAILURES:
+                result.stopped = True
+                result.not_attempted = len(missing) - index - 1
+                break
+        if pending and clock() - last_write >= CHECKPOINT_SECONDS and not write():
+            return result
+
+    if pending or (result.pruned and not result.written):
+        write()
     return result

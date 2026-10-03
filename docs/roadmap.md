@@ -423,14 +423,16 @@ remain. `derived`.
 - **A user-facing fetch cache.** The owner proposed an HTTP cache (e.g.
   `requests-cache`), at least during development (`stated`); that part
   is in [#126](https://github.com/pvliesdonk/beets-hitlisttag/issues/126).
-  Offering it to
-  users, so a forced
-  re-acquisition re-reads cached pages instead of re-fetching thousands,
+  Offering it to users, so a forced re-acquisition re-reads cached pages
+  instead of re-fetching thousands,
   is an open option. It raises questions of its own: a raw page copy
   sits closer to what the site's terms reserve, the site's
   `max-age=7200` keeps nothing, and it adds a dependency. Resolved by:
   milestone 8's refinement, if the song model needs a re-parse of
   acquired pages. `derived`.
+  A further reason (owner, 2026-10-03, during #123): an edition spanning
+  several pages is skipped whole when one page fails, and only a cache
+  keeps its other pages for the retry. `stated`.
 - **Top 40 week enumeration.** How to list a year's weeks: the site
   numbers weeks itself (week 1 of 1965 is ISO week 53 of 1964), and an
   out-of-range week returns a real 404, but whether a year index exists
@@ -721,5 +723,17 @@ remain. `derived`.
   issues block both ingestors. The spike's "~1 GB" was the decoded size;
   with gzip a full Top 40 run is about 100 MB, and #123 stands, because
   its case rests on the number of fetches.
+- 2026-10-03 — the all-or-nothing write per chart (recorded under
+  2026-10-03, #100) revised by
+  [#123](https://github.com/pvliesdonk/beets-hitlisttag/issues/123), per
+  the owner's decision on #116: `chartsacquire` keeps every edition it
+  acquired. An edition is the unit (skipped whole if any of its pages
+  fails, never stored partially); a run carries on past a failed edition
+  and stops after 3 in a row; acquired editions are written about every
+  60 seconds, at the end, and before Ctrl-C or an ingestor bug
+  propagates. Every write is still atomic and checked, so whatever ends a
+  run the file holds what it held plus everything acquired up to the last
+  successful write. `stated` (the decisions); `derived` (the invariants'
+  wording).
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464

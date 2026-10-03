@@ -274,10 +274,17 @@ Song ids stay the same across runs: a song whose artist and title are
 already in the file keeps its id (compared the way `chartsgen` matches,
 ignoring case, diacritics and punctuation). Songs are never deleted.
 
-If a chart fails (the source is unreachable, or changed its layout), its
-file is left exactly as it was. Other charts in the same run still go
-ahead, and the command exits with an error naming the charts that
-failed. A chart is also refused, rather than overwritten, when:
+An edition that can't be fetched or read is skipped, and the chart
+carries on with the next one; after 3 failed editions in a row it stops,
+since the source is probably down or has changed. What was acquired is
+kept: during a long run the file is written about once a minute, again
+at the end, and when you interrupt it with Ctrl-C, each time completely
+or not at all. A later run fetches whatever is still missing, so it
+retries the failed editions. Other charts in the same run still go
+ahead, and the command exits with an error naming the charts that had
+failures. If the source can't even list its editions, the chart fails
+and its file is left exactly as it was. A chart is also refused before
+anything is fetched, leaving its file as it was, when:
 
 - `dataset_dir/<chart>.json` holds a different chart: rename or move
   that file;
@@ -292,7 +299,10 @@ top2000: re-acquired 27 editions (1999–2025), 54,000 entries, 0 new songs
 top2000: up to date (27 editions)
 top2000: 2 editions in the file are not listed by the source (1990–1991); kept
 top2000: dropped 2 editions not listed by the source (1990–1991)
+top100: 2 editions failed (1965, 1971): <reason>; a later run retries them
+top100: stopped after 3 failed editions in a row; 40 editions not attempted
 kerst: FAILED — <reason>; file unchanged
+kerst: FAILED — <reason>; file keeps the editions acquired before it
 ```
 
 **The `top2000` ingestor** reads the consolidated table on Dutch
