@@ -92,6 +92,25 @@ def env(tmp_path):
         )
 
 
+def _tracked_under_beetsplug() -> list[str]:
+    """Paths git tracks under beetsplug/; skips outside a git checkout.
+
+    Without the skip, an sdist or tarball checkout would return nothing and
+    the assertions built on this would pass vacuously.
+    """
+    if shutil.which("git") is None or not (ROOT / ".git").exists():
+        pytest.skip("needs a git checkout")
+    tracked = subprocess.run(
+        ["git", "ls-files", "beetsplug/"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert tracked, "git lists nothing under beetsplug/"
+    return tracked
+
+
 def _acquire(env, *charts):
     env.plugin.acquire(
         env.helper.lib, SimpleNamespace(force=False, prune=False), list(charts)
@@ -125,14 +144,8 @@ class TestAcceptance:
         found = discover_ingestors(env.ingestors, log=log)
         assert "testchart" in found
         assert not type(found["testchart"]).__module__.startswith("beetsplug.")
-        tracked = subprocess.run(
-            ["git", "ls-files", "beetsplug/"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout
-        assert "testchart" not in tracked
+        tracked = _tracked_under_beetsplug()
+        assert [p for p in tracked if Path(p).stem == "testchart"] == []
 
     def test_bundled_tool_populates_dataset_through_to_tags(self, env, capsys):
         """Clause: a user can populate the local dataset by running the
@@ -183,14 +196,5 @@ class TestAcceptance:
         Everything tracked under beetsplug/ is Python source; #87's
         scripts/check_dist.py proves the wheel holds exactly those files.
         """
-        if shutil.which("git") is None or not (ROOT / ".git").exists():
-            pytest.skip("needs a git checkout")
-        tracked = subprocess.run(
-            ["git", "ls-files", "beetsplug/"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.split()
-        assert tracked, "git lists nothing under beetsplug/"
+        tracked = _tracked_under_beetsplug()
         assert [p for p in tracked if not p.endswith(".py")] == []
