@@ -519,7 +519,7 @@ class HitlistTag(BeetsPlugin):
             )
             for line in result.lines(hitlists[chart]):
                 ui.print_(line)
-            if result.error is not None:
+            if result.error is not None or result.failed:
                 failed.append(chart)
         if failed:
             raise ui.UserError(

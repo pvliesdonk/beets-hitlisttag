@@ -165,38 +165,53 @@ class ChartResult:
     written: bool = False
 
     def lines(self, axis_names: Sequence[str]) -> list[str]:
-        if self.error is not None:
-            return [f"{self.chart}: FAILED — {self.error}; file unchanged"]
-        if not self.acquired and not self.pruned:
-            out = [f"{self.chart}: up to date ({_plural(self.held, 'edition')})"]
-        elif not self.acquired:
-            out = []
-        else:
-            span = ""
-            if len(axis_names) == 1:
-                years = [ref.axes[axis_names[0]] for ref in self.acquired]
-                span = f" ({_ranges(years)})"
-            out = [
+        def span(values: Sequence[int]) -> str:
+            return f" ({_ranges(values)})" if len(axis_names) == 1 else ""
+
+        def first_axis(refs: Sequence[EditionRef]) -> list[int]:
+            return [ref.axes[axis_names[0]] for ref in refs]
+
+        out: list[str] = []
+        if self.acquired:
+            out.append(
                 f"{self.chart}: {'re-acquired' if self.forced else 'acquired'} "
                 f"{_plural(len(self.acquired), 'edition')}"
-                f"{span}, {_plural(self.entries, 'entry', 'entries')}, "
+                f"{span(first_axis(self.acquired))}, "
+                f"{_plural(self.entries, 'entry', 'entries')}, "
                 f"{_plural(self.new_songs, 'new song')}"
-            ]
+            )
+        if self.failed:
+            refs = [ref for ref, _reason in self.failed]
+            out.append(
+                f"{self.chart}: {_plural(len(self.failed), 'edition')} failed"
+                f"{span(first_axis(refs))}: {self.failed[-1][1]}; "
+                "a later run retries them"
+            )
+        if self.stopped:
+            out.append(
+                f"{self.chart}: stopped after {STOP_AFTER_FAILURES} failed editions "
+                f"in a row; {_plural(self.not_attempted, 'edition')} not attempted"
+            )
+        if self.error is not None:
+            kept = (
+                "file keeps the editions acquired before it"
+                if self.written
+                else "file unchanged"
+            )
+            out.append(f"{self.chart}: FAILED — {self.error}; {kept}")
+            return out
+        if not out and not self.pruned:
+            out.append(f"{self.chart}: up to date ({_plural(self.held, 'edition')})")
         if self.pruned:
-            span = ""
-            if len(axis_names) == 1:
-                span = f" ({_ranges([key[0] for key in self.pruned])})"
             out.append(
                 f"{self.chart}: dropped {_plural(len(self.pruned), 'edition')} "
-                f"not listed by the source{span}"
+                f"not listed by the source{span([key[0] for key in self.pruned])}"
             )
         if self.unlisted:
-            span = ""
-            if len(axis_names) == 1:
-                span = f" ({_ranges([key[0] for key in self.unlisted])})"
             out.append(
                 f"{self.chart}: {_plural(len(self.unlisted), 'edition')} in the file "
-                f"are not listed by the source{span}; kept"
+                "are not listed by the source"
+                f"{span([key[0] for key in self.unlisted])}; kept"
             )
         return out
 

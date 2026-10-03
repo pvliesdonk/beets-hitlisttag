@@ -183,7 +183,7 @@ class TestChartsacquire:
         assert [e.axes["year"] for e in data.editions] == [1999, 2001]
         assert data.editions[1].entries[0].songs[0].id == "1"
 
-    def test_one_failing_chart_does_not_stop_the_other(self, env, capsys):
+    def test_failed_edition_keeps_the_rest_and_fails_the_command(self, env, capsys):
         FakeSource(env.ingestors, "fake").set(
             {2001: [["A", "x"]], 2002: [["B", "y"]]}, fail_on=2002
         )
@@ -191,9 +191,13 @@ class TestChartsacquire:
         with pytest.raises(ui.UserError, match="fake"):
             _run(env, "fake", "other")
         out = capsys.readouterr().out
-        assert "fake: FAILED — source broke on 2002; file unchanged" in out
+        assert "fake: acquired 1 edition (2001), 1 entry, 1 new song" in out
+        assert (
+            "fake: 1 edition failed (2002): source broke on 2002; "
+            "a later run retries them" in out
+        )
         assert "other: acquired 1 edition" in out
-        assert not (env.data / "fake.json").exists()
+        assert [e.axes["year"] for e in _dataset(env)["fake"].editions] == [2001]
         assert (env.data / "other.json").exists()
 
     def test_no_arguments_acquires_configured_charts_and_skips_unconfigured(self, env):

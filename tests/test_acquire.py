@@ -336,6 +336,103 @@ class TestChartResultLines:
             "x: 2 editions in the file are not listed by the source (1990–1991); kept"
         )
 
+    def test_failed_editions_line(self):
+        r = ChartResult(
+            "x",
+            failed=[
+                (EditionRef({"year": 2001}), "boom"),
+                (EditionRef({"year": 2005}), "bang"),
+            ],
+        )
+        assert r.lines(["year"]) == [
+            "x: 2 editions failed (2001, 2005): bang; a later run retries them"
+        ]
+
+    def test_acquired_failed_and_stopped_lines(self):
+        r = ChartResult(
+            "x",
+            acquired=[EditionRef({"year": 2000})],
+            entries=40,
+            new_songs=40,
+            written=True,
+            failed=[(EditionRef({"year": y}), "down") for y in (2001, 2002, 2003)],
+            stopped=True,
+            not_attempted=1200,
+        )
+        assert r.lines(["year"]) == [
+            "x: acquired 1 edition (2000), 40 entries, 40 new songs",
+            "x: 3 editions failed (2001–2003): down; a later run retries them",
+            "x: stopped after 3 failed editions in a row; 1,200 editions not attempted",
+        ]
+
+    def test_failed_line_has_no_span_with_two_axes(self):
+        r = ChartResult(
+            "top40",
+            failed=[(EditionRef({"year": 1965, "week": 3}), "boom")],
+        )
+        assert r.lines(["year", "week"]) == [
+            "top40: 1 edition failed: boom; a later run retries them"
+        ]
+
+    def test_only_failures_is_not_up_to_date(self):
+        r = ChartResult("x", held=27, failed=[(EditionRef({"year": 2026}), "boom")])
+        assert r.lines(["year"]) == [
+            "x: 1 edition failed (2026): boom; a later run retries them"
+        ]
+
+    def test_error_after_a_write_says_what_the_file_keeps(self):
+        r = ChartResult(
+            "x",
+            acquired=[EditionRef({"year": 2001})],
+            entries=1,
+            new_songs=1,
+            written=True,
+            error="cannot write f: disk full",
+        )
+        assert r.lines(["year"]) == [
+            "x: acquired 1 edition (2001), 1 entry, 1 new song",
+            "x: FAILED — cannot write f: disk full; file keeps the editions "
+            "acquired before it",
+        ]
+
+    def test_final_write_failure_says_file_unchanged(self, tmp_path, monkeypatch):
+        def broken(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(acquire_module, "write_dataset_file", broken)
+        path = tmp_path / "fake.json"
+        ing = Scripted({2001: ("A", "x"), 2002: IngestError("boom")})
+        result = acquire_chart(ing, ["year"], None, path, HITLISTS, log)
+        assert result.lines(["year"]) == [
+            "fake: 1 edition failed (2002): boom; a later run retries them",
+            f"fake: FAILED — cannot write {path}: disk full; file unchanged",
+        ]
+
+    def test_prune_with_all_fetches_failing_reports_both(self, tmp_path):
+        path = tmp_path / "fake.json"
+        acquire_chart(
+            Scripted({2000: ("Z", "q"), 2001: ("A", "x")}),
+            ["year"],
+            None,
+            path,
+            HITLISTS,
+            log,
+        )
+        result = acquire_chart(
+            Scripted({2001: IngestError("down")}),
+            ["year"],
+            _read(tmp_path),
+            path,
+            HITLISTS,
+            log,
+            force=True,
+            prune=True,
+        )
+        assert result.lines(["year"]) == [
+            "fake: 1 edition failed (2001): down; a later run retries them",
+            "fake: dropped 1 edition not listed by the source (2000)",
+        ]
+
 
 class TestFinalReviewFixes:
     """Findings from the whole-branch review, pinned before their fixes."""
