@@ -6,9 +6,17 @@ site (#116). ``SECTIGO_R36_PEM`` is the intermediate that actually issued
 the site's certificate; giving it to ``Fetcher`` keeps verification on. If
 the site changes CA, fetches fail with an ``IngestError`` saying the
 certificate chain may have changed.
+
+``parse_list`` reads a top40.nl list page (a Top 100 year list or a weekly
+Top 40) into ``ListItem``s, in page order, without validating them; each
+ingestor decides what a usable edition is.
 """
 
 from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from html.parser import HTMLParser
 
 from beetsplug.hitlisttag.fetch import Fetcher
 
@@ -61,3 +69,118 @@ JEltkYnTAH41QJ6SAWO66GrrUESwN/cgZzL4JLEqz1Y=
 def fetcher() -> Fetcher:
     """A ``Fetcher`` configured for top40.nl."""
     return Fetcher(min_interval=MIN_INTERVAL, extra_ca_pem=SECTIGO_R36_PEM)
+
+
+_SUBTITLE = re.compile(r"/uploads/subtitle/([^/]+)/")
+_TITLE_ID = re.compile(r"-(\d+)/?$")
+_SPACES = re.compile(r"\s+")
+
+
+@dataclass(frozen=True)
+class ListItem:
+    """One item of a top40.nl list page, as published.
+
+    ``position`` is None for a dropout ("-") or an unreadable number.
+    ``title`` and ``artist`` are "" when absent. ``title_id`` is the
+    trailing number of the title link; ``subtitle`` the raw value of the
+    item image's ``uploads/subtitle/<id>/`` path, when there is one.
+    """
+
+    position: int | None
+    title: str
+    artist: str
+    title_id: str | None
+    subtitle: str | None
+
+
+def _classes(attrs: list[tuple[str, str | None]]) -> list[str]:
+    for name, value in attrs:
+        if name == "class" and value:
+            return value.split()
+    return []
+
+
+def _clean(text: str) -> str:
+    return _SPACES.sub(" ", text).strip()
+
+
+class _ListParser(HTMLParser):
+    """Collects ``top40-list__item`` blocks; each ends at its own ``</div>``."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.items: list[ListItem] = []
+        self._item: dict | None = None
+        self._depth = 0  # div nesting inside the current item
+        self._field: str | None = None  # "position", "title" or "artist"
+        self._field_tag: str | None = None
+        self._field_depth = 0  # nesting of _field_tag inside the field
+
+    def handle_starttag(self, tag, attrs):
+        classes = _classes(attrs)
+        if self._item is None:
+            if tag == "div" and "top40-list__item" in classes:
+                self._item = {"title_id": None, "subtitle": None, "text": {}}
+                self._depth = 1
+            return
+        if tag == "div":
+            self._depth += 1
+        if self._field is not None:
+            if tag == self._field_tag:
+                self._field_depth += 1
+            return
+        item = self._item
+        if tag == "img" and item["subtitle"] is None:
+            match = _SUBTITLE.search(dict(attrs).get("src") or "")
+            if match:
+                item["subtitle"] = match.group(1)
+        elif "number-block" in classes and "position" not in item["text"]:
+            self._open("position", tag)
+        elif tag == "a" and "h3" in classes and "title" not in item["text"]:
+            match = _TITLE_ID.search(dict(attrs).get("href") or "")
+            item["title_id"] = match.group(1) if match else None
+            self._open("title", tag)
+        elif tag == "a" and "lead" in classes and "artist" not in item["text"]:
+            self._open("artist", tag)
+
+    def _open(self, field: str, tag: str) -> None:
+        self._field, self._field_tag, self._field_depth = field, tag, 1
+        self._item["text"][field] = []
+
+    def handle_endtag(self, tag):
+        if self._item is None:
+            return
+        if self._field is not None and tag == self._field_tag:
+            self._field_depth -= 1
+            if self._field_depth == 0:
+                self._field = None
+        if tag == "div":
+            self._depth -= 1
+            if self._depth == 0:
+                self._finish()
+
+    def handle_data(self, data):
+        if self._item is not None and self._field is not None:
+            self._item["text"][self._field].append(data)
+
+    def _finish(self) -> None:
+        item, self._item, self._field = self._item, None, None
+        text = {key: _clean("".join(parts)) for key, parts in item["text"].items()}
+        raw = text.get("position", "")
+        self.items.append(
+            ListItem(
+                position=int(raw) if raw.isascii() and raw.isdigit() else None,
+                title=text.get("title", ""),
+                artist=text.get("artist", ""),
+                title_id=item["title_id"],
+                subtitle=item["subtitle"],
+            )
+        )
+
+
+def parse_list(html: str) -> list[ListItem]:
+    """The list items on a top40.nl list page, in page order, unvalidated."""
+    parser = _ListParser()
+    parser.feed(html)
+    parser.close()
+    return parser.items
