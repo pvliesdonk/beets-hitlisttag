@@ -127,9 +127,21 @@ from that dataset. `stated`.
   versions at the original's position, in the current weekly chart too
   ("Cheerio / Cheerio - Remix"), so one chart entry credits both the
   original and its variant (`evidenced`:
-  [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116), working notes 2/n). The policy
-  above is unchanged. How it applies to such entries is for milestone 8's
-  refinement and the owner to decide. `derived` (the reading).
+  [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116), working notes 2/n). *Decided by the
+  owner (2026-10-03, `stated`):* such an entry credits the **base song
+  only**. A remix doesn't open a gap when checking a library's
+  completeness against a chart, and holding only the remix doesn't make
+  the library complete for that position.
+- **What counts as the same song.** A re-release or remaster is the same
+  song; a different version (a re-recording, another artist's cover) is
+  not. A file of the song most likely stands for every re-release of it.
+  Which case a source's entry is can't be known up front, so entries are
+  **assumed distinct** and joined later by an explicit merge, curation
+  that milestone 8 provides. `stated` (2026-10-03). Sources' own
+  groupings are hints for such merges, never merges on their own: the
+  owner chose to capture top40.nl's title ids, which group more broadly
+  (covers included), as optional per-entry source ids
+  ([#125](https://github.com/pvliesdonk/beets-hitlisttag/issues/125)). `stated`.
 - **Raw data is disposable; curation is precious.** Acquired editions are
   re-acquirable at will; hand-curation (aliases, entry–song links, merges,
   splits) must survive full re-acquisition. `derived`.
@@ -391,6 +403,15 @@ remain. `derived`.
   rather than the site's merged titles (owner decision, from #116). The
   Top 100 year list is partly pre-merged by the site itself, so its
   tidiness is evidence about the site's own curation.
+- **A user-facing fetch cache.** The owner proposed an HTTP cache (e.g.
+  `requests-cache`), at least during development (`stated`); that part
+  is in [#126](https://github.com/pvliesdonk/beets-hitlisttag/issues/126). Offering it to users, so a forced
+  re-acquisition re-reads cached pages instead of re-fetching thousands,
+  is an open option. It raises questions of its own: a raw page copy
+  sits closer to what the site's terms reserve, the site's
+  `max-age=7200` keeps nothing, and it adds a dependency. Resolved by:
+  milestone 8's refinement, if the song model needs a re-parse of
+  acquired pages. `derived`.
 - **Top 40 week enumeration.** How to list a year's weeks: the site
   numbers weeks itself (week 1 of 1965 is ISO week 53 of 1964), and an
   out-of-range week returns a real 404, but whether a year index exists
@@ -399,10 +420,15 @@ remain. `derived`.
 - **Which "Top 100 jaarlijst".** For 1965 the site's web year list
   differs from the printed list it also hosts as an image-only scan:
   different order and some different entries. For 2025 the two agree.
-  Only the web list is machine-readable, so the ingestor takes it either
-  way; the owner confirms it is canonical in the Top 100 ingestor's
-  brainstorm ([#117](https://github.com/pvliesdonk/beets-hitlisttag/issues/117)). `evidenced`:
-  [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116).
+  `evidenced`: [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116). *Resolved (2026-10-03,
+  `stated`):* the current web list is canonical. It is the foundation's
+  points recomputation over the weekly Top 40, which the owner verified
+  in the past; the printed originals matter only to a future purist,
+  and the site's scans are where one would start. Consequence: the
+  Top 100 is computable from local Top 40 data. The owner chose to keep
+  scraping it (61 pages) and treat recomputation as a later check, which
+  the agent may run once the Top 40 ingestor
+  ([#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118)) has landed. Recorded, not ticketed.
 - **Residual miss-rate.** Whether fuzzy matching is needed at meaningful
   scale once exact-normalized lookup plus aliases exist; if the residue is
   tiny, milestone 9 shrinks — a possible change of direction, recorded here
@@ -656,3 +682,14 @@ remain. `derived`.
   contradicting the variant policy for this source (milestone 8's
   call); two new unknowns, week enumeration and which list is the
   canonical early "jaarlijst", go to the ingestors' brainstorms.
+- 2026-10-03 — discussion of the spike's divergences, owner decisions
+  (`stated`): the current web Top 100 is canonical and computable from
+  the Top 40 (#117 still scrapes it; recomputing is a later check); the
+  same song means a re-release or remaster, a different version is a
+  different song, and entries are assumed distinct until an explicit
+  merge; a chart entry that folds in a remix credits the base song only;
+  source ids are captured now as merge hints (#125); and a development
+  fetch cache joins the shared top40.nl groundwork (#126). Both new
+  issues block both ingestors. The spike's "~1 GB" was the decoded size;
+  with gzip a full Top 40 run is about 100 MB, and #123 stands, because
+  its case rests on the number of fetches.
