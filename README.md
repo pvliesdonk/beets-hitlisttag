@@ -96,6 +96,39 @@ value of the wrong type, is rejected when the tag is parsed.
 
 ## The chart dataset
 
+### Quick start
+
+To tag your library with its Top 2000 history:
+
+1. Set a dataset folder in your beets `config.yaml`:
+
+   ```yaml
+   hitlisttag:
+     dataset_dir: ~/charts
+   ```
+
+2. Fetch every edition since 1999 (one request to Wikipedia):
+
+   ```
+   beet chartsacquire top2000
+   ```
+
+3. Write `CHARTS` tags to the tracks that match:
+
+   ```
+   beet chartsgen
+   ```
+
+4. See a year's chart as your library has it:
+
+   ```
+   beet hitlist top2000 2024
+   ```
+
+Run step 2 again after each December's edition, then step 3.
+
+### How the dataset works
+
 `chartsgen` generates `CHARTS` tags from a local dataset of chart
 history. The plugin ships no chart data — complete chart listings
 generally cannot be redistributed — so each user builds the dataset on
@@ -213,64 +246,62 @@ beet hitlist -M top40 2024 5
 
 ### `chartsacquire`
 
-Fetches chart editions from public sources into the dataset (requires
-`dataset_dir` to be configured). Each chart is fetched by an *ingestor*:
-a small piece of Python that knows one chart's source.
+Fetches chart editions from public sources into the dataset. Requires
+`dataset_dir`. Each chart is fetched by an *ingestor*, a small piece of
+Python that knows one chart's source; `top2000` ships with the plugin.
 
 ```
 beet chartsacquire [--force [--prune]] [CHART ...]
 ```
 
-Without arguments it acquires every chart that has both an ingestor and
-an entry in `hitlists`. A plain run fetches only the editions the chart's
-dataset file does not hold yet, so running it again after a new edition
-is published adds just that edition; a run with nothing new reports the
-chart as up to date and leaves the file alone.
+With no `CHART`, it acquires every chart that has both an ingestor and a
+`hitlists` entry. A plain run fetches only the editions the chart's
+dataset file doesn't have yet. Run it again after a new edition is
+published and it adds just that one; with nothing new, it reports the
+chart as up to date and doesn't touch the file.
 
-- `--force` re-acquires every edition the source lists, replacing the
-  ones the file already holds. Use it after the source corrects an
-  edition, or to turn a hand-authored partial edition into the full one.
-- `--prune` (only together with `--force`) also drops editions the
-  source no longer lists. Without it they are kept and reported. It
-  refuses to run when the source lists no editions at all.
+| Option | Effect |
+| --- | --- |
+| `-f`, `--force` | Re-acquire every edition the source lists, replacing the ones the file already has. Use it after the source corrects an edition, or to turn a hand-made partial edition into the full one. |
+| `--prune` | Only with `--force`. Also drop editions the source no longer lists (without it, they're kept). Refused if the source lists no editions at all. |
 
-Song ids are stable across runs: a song whose artist and title already
-exist in the file (compared the way `chartsgen` matches, ignoring case,
-diacritics and punctuation) keeps its id, and songs are never deleted,
-even when no edition references them any more.
+Song ids stay the same across runs: a song whose artist and title are
+already in the file keeps its id (compared the way `chartsgen` matches,
+ignoring case, diacritics and punctuation). Songs are never deleted.
 
-Each chart is written all-or-nothing. The new file is written next to
-the old one, read back with the same reader `chartsgen` uses, and only
-then swapped in, so a failed run (a network error, a source that changed
-its layout) leaves the chart's file exactly as it was. Other charts in
-the same run still go ahead, and the command ends with an error naming
-the charts that failed. It also refuses, rather than overwrites, a
-`<chart>.json` that holds a different chart and a file carrying fields
-the dataset format does not define, since rewriting either would lose
-data.
+If a chart fails (the source is unreachable, or changed its layout), its
+file is left exactly as it was. Other charts in the same run still go
+ahead, and the command exits with an error naming the charts that
+failed. A chart is also refused, rather than overwritten, when:
 
-A report line per chart says what happened:
+- `dataset_dir/<chart>.json` holds a different chart: rename or move
+  that file;
+- the chart's file has fields the [dataset format](#the-chart-dataset)
+  doesn't define: remove them, or keep that chart hand-maintained.
+
+Each chart gets a report line:
 
 ```
 top2000: acquired 27 editions (1999–2025), 54,000 entries, 4,925 new songs
+top2000: re-acquired 27 editions (1999–2025), 54,000 entries, 0 new songs
 top2000: up to date (27 editions)
+top2000: 2 editions in the file are not listed by the source (1990–1991); kept
+top2000: dropped 2 editions not listed by the source (1990–1991)
 top40: FAILED — <reason>; file unchanged
 ```
 
-**Bundled ingestors.** `top2000` reads the consolidated table on Dutch
-Wikipedia (*Lijst van Radio 2-Top 2000's*): every edition since 1999, in
-one request, under Wikipedia's CC BY-SA licence. The broadcaster's own
-site is not used, because its terms forbid automated retrieval. An
-edition column that is not complete on Wikipedia (as happens while a new
-edition is being entered each December) is skipped with a warning and
-picked up on a later run. Wikipedia's spelling is used, which is
-harmonised across years; the broadcaster's "(Albumversie)" markers do
-not appear.
+**The `top2000` ingestor** reads the consolidated table on Dutch
+Wikipedia, *Lijst van Radio 2-Top 2000's*: every edition since 1999, in
+one request, licensed CC BY-SA. It doesn't use the broadcaster's own
+site, whose terms forbid automated retrieval. A year that isn't complete
+on Wikipedia yet (while the new edition is being entered each December)
+is skipped with a warning and picked up by a later run. Titles use
+Wikipedia's spelling, which is the same across years and leaves out the
+broadcaster's "(Albumversie)" markers.
 
-**Your own charts.** To acquire a chart the plugin does not cover, drop
-an ingestor script into `ingestor_dir` and add the chart to `hitlists`;
-nothing in the plugin needs changing. See
-[Writing an ingestor](docs/writing-an-ingestor.md).
+**Other charts** need an ingestor of your own: a script in
+`ingestor_dir` plus a `hitlists` entry, with no change to the plugin.
+See [Writing an ingestor](docs/writing-an-ingestor.md).
 
 ### `chartsgen`
 
