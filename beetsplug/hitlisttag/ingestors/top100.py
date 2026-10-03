@@ -21,7 +21,6 @@ import re
 from collections.abc import Callable
 
 from beetsplug.hitlisttag import top40nl
-from beetsplug.hitlisttag.acquire import _ranges
 from beetsplug.hitlisttag.ingest import (
     AcquiredEdition,
     EditionRef,
@@ -79,7 +78,7 @@ class Top100Ingestor:
         if html is None:
             raise IngestError(f"Top 100 {year}: page not found")
         items = [item for item in top40nl.parse_list(html) if item.position is not None]
-        problems = _position_problems([item.position for item in items])
+        problems = top40nl.position_problems([item.position for item in items], SIZE)
         if problems:
             raise IngestError(f"Top 100 {year}: {problems}")
         entries = []
@@ -98,24 +97,6 @@ class Top100Ingestor:
                 RawEntry(item.position, (RawSong(item.artist, item.title),), ids)
             )
         return AcquiredEdition(ref, SIZE, tuple(entries))
-
-
-def _position_problems(positions: list[int]) -> str:
-    """Why ``positions`` is not exactly 1..SIZE, each once; "" when it is."""
-    seen: set[int] = set()
-    duplicated: set[int] = set()
-    for position in positions:
-        (duplicated if position in seen else seen).add(position)
-    problems = []
-    missing = sorted(set(range(1, SIZE + 1)) - seen)
-    outside = sorted(p for p in seen if not 1 <= p <= SIZE)
-    if missing:
-        problems.append(f"missing positions {_ranges(missing)}")
-    if duplicated:
-        problems.append(f"duplicated positions {_ranges(sorted(duplicated))}")
-    if outside:
-        problems.append(f"positions outside 1–{SIZE}: {_ranges(outside)}")
-    return "; ".join(problems)
 
 
 INGESTOR = Top100Ingestor()
