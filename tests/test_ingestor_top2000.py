@@ -7,9 +7,9 @@ import os
 from pathlib import Path
 
 import pytest
-import requests
 
 from beetsplug.hitlisttag.ingest import EditionRef, IngestError
+from beetsplug.hitlisttag.ingestors import top2000
 from beetsplug.hitlisttag.ingestors.top2000 import (
     PAGE_URL,
     SIZE,
@@ -19,7 +19,6 @@ from beetsplug.hitlisttag.ingestors.top2000 import (
     _clean,
     _decode_year,
     _download_page,
-    _user_agent,
     parse_table,
 )
 
@@ -247,50 +246,44 @@ class TestTop2000Ingestor:
 
 
 class TestDefaultFetcher:
-    def test_user_agent_identifies_tool_and_contact(self):
-        ua = _user_agent()
-        assert ua.startswith("beets-hitlisttag/")
-        assert "(+https://github.com/pvliesdonk/beets-hitlisttag)" in ua
-        assert f"requests/{requests.__version__}" in ua
+    """The default download path goes through the shared Fetcher (#126)."""
 
-    def test_download_calls_requests_with_url_agent_and_timeout(self, monkeypatch):
-        captured = {}
+    @staticmethod
+    def _fake(monkeypatch, result):
+        captured: dict = {}
 
-        class Response:
-            text = "page text"
+        class FakeFetcher:
+            def __init__(self, **kwargs):
+                captured["kwargs"] = kwargs
 
-            def raise_for_status(self):
-                pass
+            def get(self, url):
+                captured["url"] = url
+                if isinstance(result, Exception):
+                    raise result
+                return result
 
-        def fake_get(url, headers=None, timeout=None):
-            captured.update(url=url, headers=headers, timeout=timeout)
-            return Response()
+        monkeypatch.setattr(top2000, "Fetcher", FakeFetcher)
+        return captured
 
-        monkeypatch.setattr(requests, "get", fake_get)
+    def test_download_uses_a_default_fetcher_on_page_url(self, monkeypatch):
+        captured = self._fake(monkeypatch, "page text")
         assert _download_page() == "page text"
-        assert captured["url"] == PAGE_URL
-        assert captured["headers"]["User-Agent"] == _user_agent()
-        assert captured["timeout"] == 30
+        assert captured == {"kwargs": {}, "url": PAGE_URL}
 
-    def test_http_error_propagates_as_request_exception(self, monkeypatch):
-        class Response:
-            def raise_for_status(self):
-                raise requests.HTTPError("503 Service Unavailable")
-
-        monkeypatch.setattr(requests, "get", lambda *a, **k: Response())
-        # The ingestor turns this into an IngestError (covered in Task 2); the
-        # fetcher itself lets requests' own exception through.
-        with pytest.raises(requests.HTTPError):
+    def test_404_is_ingest_error(self, monkeypatch):
+        self._fake(monkeypatch, None)
+        with pytest.raises(IngestError, match="gone"):
             _download_page()
 
-    def test_default_ingestor_turns_http_error_into_ingest_error(self, monkeypatch):
-        class Response:
-            def raise_for_status(self):
-                raise requests.HTTPError("503 Service Unavailable")
-
-        monkeypatch.setattr(requests, "get", lambda *a, **k: Response())
+    def test_default_ingestor_passes_fetch_errors_through(self, monkeypatch):
+        self._fake(monkeypatch, IngestError(f"cannot fetch {PAGE_URL}: HTTP 503"))
         with pytest.raises(IngestError, match="cannot fetch.*503"):
             list(Top2000Ingestor().editions())
+
+    def test_fetcher_is_built_per_download_not_at_import(self, monkeypatch):
+        captured = self._fake(monkeypatch, "page text")
+        Top2000Ingestor()  # constructing an ingestor builds no Fetcher
+        assert captured == {}
 
 
 class TestFinalReviewFixes:
