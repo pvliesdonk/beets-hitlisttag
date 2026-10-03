@@ -86,6 +86,13 @@ from that dataset. `stated`.
   `stated` (2026-08-04). Consequence: each user regenerates the dataset
   locally from public sources; the project distributes the means, never the
   data. `derived`.
+  *Applied to top40.nl (2026-10-03):* its disclaimer reserves copyright
+  and database rights over all published data and requires written
+  permission to copy and publish it, with no clause against automated
+  retrieval. The owner proceeds on their own risk, on the condition that
+  each user's acquired copy is and stays unpublished. `stated`
+  (`evidenced`:
+  [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116)).
 - **Acquisition is pluggable.** Per-chart *ingestors* — scrapers, API
   fetchers, file downloaders, however a chart's data is obtained — that
   third parties can add for their own hitlists without modifying this
@@ -116,7 +123,31 @@ from that dataset. `stated`.
   The user notes a few live versions are merged on Wikipedia, though not
   many. `stated` (correction of an agent over-reading; `evidenced`:
   [#98](https://github.com/pvliesdonk/beets-hitlisttag/issues/98),
-  correction comment).
+  correction comment). *Contradicted by the top40.nl source
+  (2026-10-03):* the Top 40 puts remixes and alternate versions at the
+  original's position, in the current weekly chart too ("Cheerio /
+  Cheerio - Remix"), so one chart entry credits both the original and
+  its variant (`evidenced`: [#116 notes][n116]). *Decided by the
+  owner (2026-10-03, `stated`):* such an entry credits the **base song
+  only**. A remix doesn't open a gap when checking a library's
+  completeness against a chart, and holding only the remix doesn't make
+  the library complete for that position.
+- **What counts as the same song.** A re-release or remaster is the same
+  song; a different version (a re-recording, another artist's cover) is
+  not. A file of the song most likely stands for every re-release of it.
+  Which case a source's entry is can't be known up front, so entries are
+  **assumed distinct** and joined later by an explicit merge, curation
+  that milestone 8 provides. `stated` (2026-10-03). Sources' own
+  groupings are hints for such merges, never merges on their own: the
+  owner chose to capture top40.nl's title ids, which group more broadly
+  (covers included), as optional per-entry source ids
+  ([#125](https://github.com/pvliesdonk/beets-hitlisttag/issues/125)).
+  `stated`. Different versions sharing one position, as by 1960s Dutch chart
+  practice (*Il Silenzio*, 1965 #3, credited to three artists), are
+  treated like a double or triple A-side: each version gets the
+  position. `stated` (2026-10-03); the owner notes other chart
+  followers may not agree, so this is one more reading the beets-side
+  matching could make configurable (`derived`).
 - **Raw data is disposable; curation is precious.** Acquired editions are
   re-acquirable at will; hand-curation (aliases, entry–song links, merges,
   splits) must survive full re-acquisition. `derived`.
@@ -188,11 +219,23 @@ throughout.
    milestone numbers are names, not an order. *Edge repointed
    (2026-10-03):* milestone 10's refinement named the Top 100 year
    list rather than the Top 40 weekly as the first raw-published
-   ingestor (#72 ← [#117](https://github.com/pvliesdonk/beets-hitlisttag/issues/117)).
+   ingestor (#72 ←
+   [#117](https://github.com/pvliesdonk/beets-hitlisttag/issues/117)).
    The owner says either serves, as the two lists are different
    published views of the same data (`stated`); the Top 100 has far
    fewer editions to fetch, so it is the cheaper first proof
-   (`derived`). If the Top 40 ingestor lands first, the edge moves to it.
+   (`derived`; superseded below). If the Top 40 ingestor lands first,
+   the edge moves to it.
+   *Repointed again (2026-10-03, owner decision):* the source spike found
+   that the Top 100 year page shows the site's merged titles, folding in
+   versions and later re-releases, while week pages show the version
+   that charted. The rawer view is the Top 40 weekly, so #72 now waits on
+   [#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118)
+   (`evidenced`:
+   [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116)).
+   The cheaper-first-proof argument
+   for the Top 100 no longer decides it; the Top 40's ~3,200 fetches make
+   it the bigger build (see *Partial progress*).
 9. **Matching beyond exact** after the ontology: fuzzy and interactive
    matching are only worth their complexity for the residue left after
    normalization plus aliases, and the earlier milestones' unmatched-track
@@ -315,7 +358,17 @@ remain. `derived`.
   checked by name and shape, not counted. If the terms rule top40.nl out,
   the argument that milestone 10's first ingestor feeds milestone 8
   needs a new source or a new order. That goes here as a change of
-  direction, not as a request for more time.
+  direction, not as a request for more time. *Resolved for the Top 40 /
+  Top 100 (2026-10-03, about an hour of the appetite):* top40.nl is
+  technically viable (server-rendered pages, nothing needs its
+  robots-disallowed `/api`), with traps the ingestors must handle,
+  starting with a TLS chain Python cannot verify unaided. Its terms
+  reserve database rights; the owner accepts that risk (see *No chart
+  data is shipped or published*). The owner may look for another source
+  later as well; not knowing changes nothing now, so this is recorded,
+  not ticketed (`stated`). Verdict and working notes are in the issue
+  (`evidenced`:
+  [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116)).
 - **Partial progress on many-fetch charts.** `chartsacquire` fetches every
   missing edition before writing and discards the lot on one failed fetch
   (`evidenced`: `beetsplug/hitlisttag/acquire.py`, `acquire_chart`). That
@@ -326,7 +379,17 @@ remain. `derived`.
   Resolved by: the source spike
   ([#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116)),
   whose fetch count decides whether a feature is filed. `stated` (record
-  as an unknown, 2026-10-03); `derived` (the analysis).
+  as an unknown, 2026-10-03); `derived` (the analysis). *Resolved
+  (2026-10-03):* a full Top 40 population is about 3,200 page fetches
+  (`evidenced`:
+  [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116)).
+  The owner chose to
+  keep fetched editions across a failure, revising the all-or-nothing
+  write: each file write stays atomic, but a file may hold only some
+  editions after a failed run (`stated`). Carried by
+  [#123](https://github.com/pvliesdonk/beets-hitlisttag/issues/123),
+  which blocks the Top 40
+  ingestor.
 - **Ingestor plug-in mechanism.** How a third party's ingestor is found —
   Python entry points, a config-pointed module path, or both — is a
   feature-level decision the user deliberately left to the contract
@@ -349,7 +412,48 @@ remain. `derived`.
   ([#117](https://github.com/pvliesdonk/beets-hitlisttag/issues/117)),
   or the Top 40 weekly one
   ([#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118))
-  if it lands first. Either serves (`stated`).
+  if it lands first. Either serves (`stated`). *Pointer moved
+  (2026-10-03):* to the Top 40 weekly ingestor
+  ([#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118)),
+  whose pages show the
+  charting version
+  rather than the site's merged titles (owner decision, from #116). The
+  Top 100 year list is partly pre-merged by the site itself, so its
+  tidiness is evidence about the site's own curation.
+- **A user-facing fetch cache.** The owner proposed an HTTP cache (e.g.
+  `requests-cache`), at least during development (`stated`); that part
+  is in [#126](https://github.com/pvliesdonk/beets-hitlisttag/issues/126).
+  Offering it to
+  users, so a forced
+  re-acquisition re-reads cached pages instead of re-fetching thousands,
+  is an open option. It raises questions of its own: a raw page copy
+  sits closer to what the site's terms reserve, the site's
+  `max-age=7200` keeps nothing, and it adds a dependency. Resolved by:
+  milestone 8's refinement, if the song model needs a re-parse of
+  acquired pages. `derived`.
+- **Top 40 week enumeration.** How to list a year's weeks: the site
+  numbers weeks itself (week 1 of 1965 is ISO week 53 of 1964), and an
+  out-of-range week returns a real 404, but whether a year index exists
+  is unchecked. Cheap to answer; resolved by the Top 40 ingestor's
+  brainstorm
+  ([#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118)).
+  `derived`.
+- **Which "Top 100 jaarlijst".** For 1965 the site's web year list
+  differs from the printed list it also hosts as an image-only scan:
+  different order and some different entries. For 2025 the two agree.
+  `evidenced`:
+  [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116).
+  *Resolved (2026-10-03,
+  `stated`):* the current web list is canonical. It is the foundation's
+  points recomputation over the weekly Top 40, which the owner verified
+  in the past; the printed originals matter only to a future purist,
+  and the site's scans are where one would start. Consequence: the
+  Top 100 is computable from local Top 40 data. The owner chose to keep
+  scraping it (61 pages) and treat recomputation as a later check, which
+  the agent may run once the Top 40 ingestor
+  ([#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118))
+  has landed.
+  Recorded, not ticketed.
 - **Residual miss-rate.** Whether fuzzy matching is needed at meaningful
   scale once exact-normalized lookup plus aliases exist; if the residue is
   tiny, milestone 9 shrinks — a possible change of direction, recorded here
@@ -588,3 +692,34 @@ remain. `derived`.
   The milestone description says "remaining bundled charts" but the
   criterion names only the Top 40 and Top 100; zwaarstelijst and kerst
   stay as recorded under their own unknown. No change to direction.
+- 2026-10-03 — research spike #116 (top40.nl source viability) closed
+  in about an hour of its one-day appetite. Ten fetches, authorized by
+  the owner because the site's robots.txt names AI agents in a deny-all
+  group while allowing a generic client on chart pages. Verdict: the site
+  can supply both lists; its terms reserve database rights, and the
+  owner proceeds on their own risk with every user's copy unpublished.
+  Three owner decisions followed: the partial-progress feature is filed
+  (#123, blocking the Top 40 ingestor), revising the all-or-nothing
+  write; #72 now waits on the Top 40 weekly ingestor (#118) rather than
+  the Top 100 (#117), because the year list is pre-merged by the site;
+  and another source may be sought later, unticketed. Recorded at
+  first as milestone 8's call and decided later the same day (next
+  entry): the site merges remixes into the original's position,
+  contradicting the variant policy for this source; two new unknowns,
+  week enumeration and which list is the canonical early "jaarlijst",
+  go to the ingestors' brainstorms.
+- 2026-10-03 — discussion of the spike's divergences, owner decisions
+  (`stated`): the current web Top 100 is canonical and computable from
+  the Top 40 (#117 still scrapes it; recomputing is a later check); the
+  same song means a re-release or remaster, a different version is a
+  different song, and entries are assumed distinct until an explicit
+  merge; a chart entry that folds in a remix credits the base song only,
+  while different versions sharing a position each get it, like a
+  double A-side;
+  source ids are captured now as merge hints (#125); and a development
+  fetch cache joins the shared top40.nl groundwork (#126). Both new
+  issues block both ingestors. The spike's "~1 GB" was the decoded size;
+  with gzip a full Top 40 run is about 100 MB, and #123 stands, because
+  its case rests on the number of fetches.
+
+[n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
