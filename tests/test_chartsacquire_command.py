@@ -1,0 +1,254 @@
+"""Command-level tests for chartsacquire, with drop-in fake ingestors."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from beets import config, ui
+from beets.plugins import find_plugins, load_plugins
+
+from beetsplug.hitlisttag import HitlistTag
+from beetsplug.hitlisttag.dataset import read_dataset
+
+FAKE_SCRIPT = """
+import json
+from pathlib import Path
+
+from beetsplug.hitlisttag.ingest import (
+    AcquiredEdition, EditionRef, IngestError, RawEntry, RawSong,
+)
+
+STATE = Path({state!r})
+
+
+class Fake:
+    chart = {chart!r}
+    axes = {axes!r}
+
+    def _state(self):
+        return json.loads(STATE.read_text(encoding="utf-8"))
+
+    def editions(self):
+        return [EditionRef({{"year": int(y)}}) for y in self._state()["editions"]]
+
+    def fetch(self, ref):
+        state = self._state()
+        year = ref.axes["year"]
+        with STATE.with_suffix(".calls").open("a", encoding="utf-8") as fh:
+            fh.write(f"{{year}}\\n")
+        if year == state.get("fail_on"):
+            raise IngestError(f"source broke on {{year}}")
+        pairs = state["editions"][str(year)]
+        entries = tuple(
+            RawEntry(i + 1, (RawSong(a, t),)) for i, (a, t) in enumerate(pairs)
+        )
+        return AcquiredEdition(ref, len(pairs), entries)
+
+
+INGESTOR = Fake()
+"""
+
+
+class FakeSource:
+    """A drop-in ingestor script plus a JSON state file the tests mutate."""
+
+    def __init__(self, ingestor_dir: Path, chart: str, axes=("year",)):
+        ingestor_dir.mkdir(parents=True, exist_ok=True)
+        self.state = ingestor_dir / f"{chart}.state.json"
+        (ingestor_dir / f"fake_{chart}.py").write_text(
+            FAKE_SCRIPT.format(state=str(self.state), chart=chart, axes=tuple(axes)),
+            encoding="utf-8",
+        )
+        self.set({})
+
+    def set(self, editions: dict[int, list[tuple[str, str]]], fail_on=None):
+        self.state.write_text(
+            json.dumps(
+                {
+                    "editions": {str(y): p for y, p in editions.items()},
+                    "fail_on": fail_on,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def calls(self) -> list[int]:
+        calls = self.state.with_suffix(".calls")
+        return [int(x) for x in calls.read_text().split()] if calls.exists() else []
+
+
+@pytest.fixture
+def env(tmp_path):
+    from beets.test.helper import TestHelper
+
+    helper = TestHelper()
+    with helper:
+        config["plugins"] = ["hitlisttag"]
+        config["hitlisttag"]["hitlists"] = {"fake": ["year"], "other": ["year"]}
+        config["hitlisttag"]["dataset_dir"] = str(tmp_path / "data")
+        config["hitlisttag"]["ingestor_dir"] = str(tmp_path / "ingestors")
+        load_plugins()
+        plugin = next(p for p in find_plugins() if isinstance(p, HitlistTag))
+        yield SimpleNamespace(
+            helper=helper,
+            plugin=plugin,
+            data=tmp_path / "data",
+            ingestors=tmp_path / "ingestors",
+        )
+
+
+def _run(env, *charts):
+    env.plugin.acquire(env.helper.lib, SimpleNamespace(), list(charts))
+
+
+def _dataset(env):
+    return {
+        d.chart: d
+        for d in read_dataset(env.data, {"fake": ["year"], "other": ["year"]}, _log())
+    }
+
+
+def _log():
+    import logging
+
+    return logging.getLogger("test.chartsacquire")
+
+
+class TestChartsacquire:
+    def test_registered(self, env):
+        assert "chartsacquire" in [c.name for c in env.plugin.commands()]
+
+    def test_first_run_creates_file_and_reports(self, env, capsys):
+        # Review focus 5: dataset_dir does not exist yet.
+        src = FakeSource(env.ingestors, "fake")
+        src.set({2001: [["A", "x"], ["B", "y"]], 2002: [["A", "x"]]})
+        assert not env.data.exists()
+        _run(env, "fake")
+        out = capsys.readouterr().out
+        assert "fake: acquired 2 editions (2001–2002), 3 entries, 2 new songs" in out
+        assert (env.data / "fake.json").exists()
+        assert [e.axes["year"] for e in _dataset(env)["fake"].editions] == [2001, 2002]
+
+    def test_second_run_up_to_date_and_untouched(self, env, capsys):
+        src = FakeSource(env.ingestors, "fake")
+        src.set({2001: [["A", "x"]]})
+        _run(env, "fake")
+        path = env.data / "fake.json"
+        before = (path.read_bytes(), path.stat().st_mtime_ns)
+        capsys.readouterr()
+        _run(env, "fake")
+        assert "fake: up to date (1 edition)" in capsys.readouterr().out
+        assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+        assert src.calls() == [2001]
+
+    def test_source_grows_only_new_edition_fetched(self, env):
+        src = FakeSource(env.ingestors, "fake")
+        src.set({2001: [["A", "x"]]})
+        _run(env, "fake")
+        src.set({2001: [["A", "x"]], 2002: [["A", "x"], ["C", "z"]]})
+        _run(env, "fake")
+        assert src.calls() == [2001, 2002]
+        e2002 = next(
+            e for e in _dataset(env)["fake"].editions if e.axes["year"] == 2002
+        )
+        assert [s.id for en in e2002.entries for s in en.songs] == ["1", "2"]
+
+    def test_hand_authored_file_in_subdirectory_updated_in_place(self, env):
+        sub = env.data / "hand"
+        sub.mkdir(parents=True)
+        (sub / "mine.json").write_text(
+            json.dumps(
+                {
+                    "chart": "fake",
+                    "songs": {"1": {"artist": "Hand", "title": "Made"}},
+                    "editions": [
+                        {
+                            "axes": {"year": 1999},
+                            "size": 5,
+                            "entries": [{"position": 4, "songs": ["1"]}],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        FakeSource(env.ingestors, "fake").set({2001: [["Hand", "made"]]})
+        _run(env, "fake")
+        assert not (env.data / "fake.json").exists()
+        data = _dataset(env)["fake"]
+        assert data.source == sub / "mine.json"
+        assert [e.axes["year"] for e in data.editions] == [1999, 2001]
+        assert data.editions[1].entries[0].songs[0].id == "1"
+
+    def test_one_failing_chart_does_not_stop_the_other(self, env, capsys):
+        FakeSource(env.ingestors, "fake").set(
+            {2001: [["A", "x"]], 2002: [["B", "y"]]}, fail_on=2002
+        )
+        FakeSource(env.ingestors, "other").set({2001: [["C", "z"]]})
+        with pytest.raises(ui.UserError, match="fake"):
+            _run(env, "fake", "other")
+        out = capsys.readouterr().out
+        assert "fake: FAILED — source broke on 2002; file unchanged" in out
+        assert "other: acquired 1 edition" in out
+        assert not (env.data / "fake.json").exists()
+        assert (env.data / "other.json").exists()
+
+    def test_no_arguments_acquires_configured_charts_and_skips_unconfigured(self, env):
+        FakeSource(env.ingestors, "fake").set({2001: [["A", "x"]]})
+        FakeSource(env.ingestors, "stranger").set({2001: [["S", "s"]]})
+        _run(env)
+        assert (env.data / "fake.json").exists()
+        assert not (env.data / "stranger.json").exists()
+
+    def test_chart_named_twice_runs_once(self, env, capsys):
+        # Review focus 4.
+        src = FakeSource(env.ingestors, "fake")
+        src.set({2001: [["A", "x"]]})
+        _run(env, "fake", "fake")
+        assert capsys.readouterr().out.count("fake: acquired") == 1
+        assert src.calls() == [2001]
+
+
+class TestPreconditions:
+    def test_dataset_dir_unset(self, env):
+        config["hitlisttag"]["dataset_dir"] = None
+        with pytest.raises(ui.UserError, match="dataset_dir"):
+            _run(env, "fake")
+
+    def test_unknown_chart_lists_available(self, env):
+        FakeSource(env.ingestors, "fake")
+        with pytest.raises(ui.UserError, match=r"no ingestor for nope.*fake"):
+            _run(env, "nope")
+
+    def test_unconfigured_named_chart(self, env):
+        FakeSource(env.ingestors, "stranger")
+        with pytest.raises(ui.UserError, match="stranger.*not a configured hitlist"):
+            _run(env, "stranger")
+
+    def test_axes_mismatch_fails_without_writing(self, env, capsys):
+        FakeSource(env.ingestors, "fake", axes=("year", "week")).set(
+            {2001: [["A", "x"]]}
+        )
+        with pytest.raises(ui.UserError, match="fake"):
+            _run(env, "fake")
+        assert "differ from configured axes" in capsys.readouterr().out
+        assert not (env.data / "fake.json").exists()
+
+    def test_broken_existing_dataset_file(self, env):
+        env.data.mkdir(parents=True)
+        (env.data / "broken.json").write_text("{nope", encoding="utf-8")
+        FakeSource(env.ingestors, "fake").set({2001: [["A", "x"]]})
+        with pytest.raises(ui.UserError, match="broken.json"):
+            _run(env, "fake")
+        assert not (env.data / "fake.json").exists()
+
+    def test_duplicate_drop_ins_are_user_error(self, env):
+        FakeSource(env.ingestors, "fake")
+        (env.ingestors / "fake_again.py").write_text(
+            (env.ingestors / "fake_fake.py").read_text(), encoding="utf-8"
+        )
+        with pytest.raises(ui.UserError, match="claimed by two"):
+            _run(env, "fake")
