@@ -18,10 +18,10 @@ import logging
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from importlib import metadata
 
 import requests
 
+from beetsplug.hitlisttag.fetch import Fetcher
 from beetsplug.hitlisttag.ingest import (
     AcquiredEdition,
     EditionRef,
@@ -171,8 +171,8 @@ def parse_table(wikitext: str) -> Table:
 class Top2000Ingestor:
     """The ``top2000`` ingestor over Wikipedia's consolidated table.
 
-    One page fetch per instance, on first use; ``fetch_text`` is injectable
-    so tests never touch the network.
+    One page fetch per instance, on first use, through the shared ``Fetcher``;
+    ``fetch_text`` is injectable so tests never touch the network.
     """
 
     chart = "top2000"
@@ -233,24 +233,16 @@ class Top2000Ingestor:
         return AcquiredEdition(ref, SIZE, tuple(entries))
 
 
-def _user_agent() -> str:
-    """Wikimedia's User-Agent policy shape: tool/version (contact) library/version."""
-    try:
-        version = metadata.version("beets-hitlisttag")
-    except metadata.PackageNotFoundError:
-        version = "dev"
-    return (
-        f"beets-hitlisttag/{version} "
-        f"(+https://github.com/pvliesdonk/beets-hitlisttag) "
-        f"requests/{requests.__version__}"
-    )
-
-
 def _download_page() -> str:
-    """Fetch the page; ``requests`` exceptions propagate for the caller to wrap."""
-    response = requests.get(PAGE_URL, headers={"User-Agent": _user_agent()}, timeout=30)
-    response.raise_for_status()
-    return response.text
+    """Fetch the page through a default ``Fetcher``; any failure is IngestError.
+
+    The ``Fetcher`` is built here, per download, so ``HITLISTTAG_HTTP_CACHE``
+    is read when a run fetches rather than when the module is imported.
+    """
+    text = Fetcher().get(PAGE_URL)
+    if text is None:
+        raise IngestError(f"the Top 2000 page is gone (HTTP 404): {PAGE_URL}")
+    return text
 
 
 INGESTOR = Top2000Ingestor()
