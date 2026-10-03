@@ -299,8 +299,8 @@ top2000: re-acquired 27 editions (1999–2025), 54,000 entries, 0 new songs
 top2000: up to date (27 editions)
 top2000: 2 editions in the file are not listed by the source (1990–1991); kept
 top2000: dropped 2 editions not listed by the source (1990–1991)
-top40: 2 editions failed (1965, 1971): <reason>; a later run retries them
-top40: stopped after 3 failed editions in a row; 1,200 editions not attempted
+top100: 2 editions failed (1965, 1971): <reason>; a later run retries them
+top100: stopped after 3 failed editions in a row; 40 editions not attempted
 kerst: FAILED — <reason>; file unchanged
 kerst: FAILED — <reason>; file keeps the editions acquired before it
 ```

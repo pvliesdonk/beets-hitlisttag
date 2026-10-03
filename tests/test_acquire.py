@@ -964,3 +964,98 @@ class TestPartialProgress:
         assert (one / "fake.json").read_text("utf-8") == (many / "fake.json").read_text(
             "utf-8"
         )
+
+
+class TestReviewFixes123:
+    """Findings from #123's whole-branch review."""
+
+    def test_failed_ref_with_wrong_axis_names_does_not_crash_the_report(self, tmp_path):
+        class WrongAxis(Scripted):
+            def editions(self):
+                return [EditionRef({"jaar": 2001}), EditionRef({"year": 2002})]
+
+        ing = WrongAxis({2002: ("A", "x")})
+        result = acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        [(_ref, reason)] = result.failed
+        assert "declares axes" in reason
+        lines = result.lines(["year"])
+        assert lines[0] == "fake: acquired 1 edition (2002), 1 entry, 1 new song"
+        assert lines[1].startswith("fake: 1 edition failed: ")
+
+    def test_failed_ref_missing_first_of_two_axes_does_not_crash(self, tmp_path):
+        class TwoAxis(Scripted):
+            axes = ("year", "week")
+
+            def editions(self):
+                return [EditionRef({"week": 3})]
+
+        ing = TwoAxis({})
+        result = acquire_chart(
+            ing, ["year", "week"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert len(result.failed) == 1
+        assert result.lines(["year", "week"])[0].startswith("fake: 1 edition failed: ")
+
+    def test_drop_that_reached_the_file_is_reported_even_after_a_failed_write(
+        self, tmp_path, monkeypatch
+    ):
+        path = tmp_path / "fake.json"
+        acquire_chart(
+            Scripted({1990: ("Z", "q"), 2000: ("A", "x"), 2001: ("B", "y")}),
+            ["year"],
+            None,
+            path,
+            HITLISTS,
+            log,
+        )
+        clock = FakeClock()
+        real_write = acquire_module.write_dataset_file
+        calls: list[int] = []
+
+        def flaky(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real_write(*args, **kwargs)
+
+        def tick(year):
+            clock.now += 60
+
+        monkeypatch.setattr(acquire_module, "write_dataset_file", flaky)
+        ing = Scripted({2000: ("A", "x"), 2001: ("B", "y")}, on_fetch=tick)
+        result = acquire_chart(
+            ing,
+            ["year"],
+            _read(tmp_path),
+            path,
+            HITLISTS,
+            log,
+            force=True,
+            prune=True,
+            clock=clock,
+        )
+        assert _years(tmp_path) == [2000, 2001]  # 1990 dropped at the checkpoint
+        assert "fake: dropped 1 edition not listed by the source (1990)" in (
+            result.lines(["year"])
+        )
+
+    def test_checkpoint_also_fires_after_a_failed_edition(self, tmp_path):
+        clock = FakeClock()
+        seen: dict[int, list[int]] = {}
+        steps = {2001: 10, 2002: 60, 2003: 0}
+
+        def on_fetch(year):
+            seen[year] = _years(tmp_path)
+            clock.now += steps[year]
+
+        ing = Scripted(
+            {2001: ("A", "x"), 2002: IngestError("slow failure"), 2003: ("B", "y")},
+            on_fetch=on_fetch,
+        )
+        acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log, clock=clock
+        )
+        # t=70 after the failed 2002: the checkpoint writes 2001 before 2003.
+        assert seen[2003] == [2001]

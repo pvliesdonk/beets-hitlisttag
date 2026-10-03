@@ -166,10 +166,16 @@ class ChartResult:
 
     def lines(self, axis_names: Sequence[str]) -> list[str]:
         def span(values: Sequence[int]) -> str:
-            return f" ({_ranges(values)})" if len(axis_names) == 1 else ""
+            return f" ({_ranges(values)})" if len(axis_names) == 1 and values else ""
 
         def first_axis(refs: Sequence[EditionRef]) -> list[int]:
-            return [ref.axes[axis_names[0]] for ref in refs]
+            # A failed ref may lack the axis: a wrong axis name is one reason
+            # an edition fails.
+            if len(axis_names) != 1:
+                return []
+            return [
+                ref.axes[axis_names[0]] for ref in refs if axis_names[0] in ref.axes
+            ]
 
         out: list[str] = []
         if self.acquired:
@@ -193,6 +199,8 @@ class ChartResult:
                 f"in a row; {_plural(self.not_attempted, 'edition')} not attempted"
             )
         if self.error is not None:
+            if self.written and self.pruned:
+                out.append(self._pruned_line(span))
             kept = (
                 "file keeps the editions acquired before it"
                 if self.written
@@ -203,10 +211,7 @@ class ChartResult:
         if not out and not self.pruned:
             out.append(f"{self.chart}: up to date ({_plural(self.held, 'edition')})")
         if self.pruned:
-            out.append(
-                f"{self.chart}: dropped {_plural(len(self.pruned), 'edition')} "
-                f"not listed by the source{span([key[0] for key in self.pruned])}"
-            )
+            out.append(self._pruned_line(span))
         if self.unlisted:
             out.append(
                 f"{self.chart}: {_plural(len(self.unlisted), 'edition')} in the file "
@@ -214,6 +219,12 @@ class ChartResult:
                 f"{span([key[0] for key in self.unlisted])}; kept"
             )
         return out
+
+    def _pruned_line(self, span: Callable[[Sequence[int]], str]) -> str:
+        return (
+            f"{self.chart}: dropped {_plural(len(self.pruned), 'edition')} "
+            f"not listed by the source{span([key[0] for key in self.pruned])}"
+        )
 
 
 def acquire_chart(
@@ -344,6 +355,7 @@ def acquire_chart(
 
     in_a_row = 0
     for index, ref in enumerate(missing):
+        reason: str | None = None
         try:
             edition = acquire_edition(ingestor, ref)
         except IngestError as err:
@@ -363,15 +375,15 @@ def acquire_chart(
         else:
             pending.append(edition)
             in_a_row = 0
-            if clock() - last_write >= CHECKPOINT_SECONDS and not write():
-                return result
-            continue
-        result.failed.append((ref, reason))
-        in_a_row += 1
-        if in_a_row >= STOP_AFTER_FAILURES:
-            result.stopped = True
-            result.not_attempted = len(missing) - index - 1
-            break
+        if reason is not None:
+            result.failed.append((ref, reason))
+            in_a_row += 1
+            if in_a_row >= STOP_AFTER_FAILURES:
+                result.stopped = True
+                result.not_attempted = len(missing) - index - 1
+                break
+        if pending and clock() - last_write >= CHECKPOINT_SECONDS and not write():
+            return result
 
     if pending or (result.pruned and not result.written):
         write()
