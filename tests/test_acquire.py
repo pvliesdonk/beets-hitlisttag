@@ -5,9 +5,15 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from beetsplug.hitlisttag.acquire import merge_acquired
-from beetsplug.hitlisttag.dataset import Edition, Entry, HitlistData, Song
-from beetsplug.hitlisttag.ingest import AcquiredEdition, EditionRef, RawEntry, RawSong
+from beetsplug.hitlisttag.acquire import ChartResult, acquire_chart, merge_acquired
+from beetsplug.hitlisttag.dataset import Edition, Entry, HitlistData, Song, read_dataset
+from beetsplug.hitlisttag.ingest import (
+    AcquiredEdition,
+    EditionRef,
+    IngestError,
+    RawEntry,
+    RawSong,
+)
 
 log = logging.getLogger("test.acquire")
 SRC = Path("data/fake.json")
@@ -144,3 +150,182 @@ class TestMergeAcquired:
         )
         data, _ = merge_acquired(None, "fake", ["year", "week"], [acquired], SRC, log)
         assert list(data.editions[0].axes) == ["year", "week"]
+
+
+HITLISTS = {"fake": ["year"]}
+
+
+class FakeIngestor:
+    """In-memory ingestor: {year: [(artist, title), ...]}; records fetches."""
+
+    chart = "fake"
+    axes = ("year",)
+
+    def __init__(self, editions, fail_on=None, as_generator=False, repeat=False):
+        self.data = editions
+        self.fail_on = fail_on
+        self.as_generator = as_generator
+        self.repeat = repeat
+        self.fetched: list[int] = []
+
+    def editions(self):
+        refs = [EditionRef({"year": y}) for y in self.data]
+        if self.repeat:
+            refs = refs + refs
+        return (r for r in refs) if self.as_generator else refs
+
+    def fetch(self, ref):
+        year = ref.axes["year"]
+        self.fetched.append(year)
+        if year == self.fail_on:
+            raise IngestError(f"source broke on {year}")
+        return _acq(year, *self.data[year])
+
+
+def _read(tmp_path):
+    found = read_dataset(tmp_path, HITLISTS, log)
+    return found[0] if found else None
+
+
+class TestAcquireChart:
+    def test_first_run_writes_file(self, tmp_path):
+        path = tmp_path / "fake.json"
+        ing = FakeIngestor({2001: [("A", "x"), ("B", "y")], 2002: [("A", "x")]})
+        result = acquire_chart(ing, ["year"], None, path, HITLISTS, log)
+        assert result.error is None
+        assert [r.axes["year"] for r in result.acquired] == [2001, 2002]
+        assert result.entries == 3 and result.new_songs == 2
+        assert [e.axes["year"] for e in _read(tmp_path).editions] == [2001, 2002]
+
+    def test_up_to_date_does_not_rewrite(self, tmp_path):
+        path = tmp_path / "fake.json"
+        ing = FakeIngestor({2001: [("A", "x")]})
+        acquire_chart(ing, ["year"], None, path, HITLISTS, log)
+        before = (path.read_bytes(), path.stat().st_mtime_ns)
+        again = FakeIngestor({2001: [("A", "x")]})
+        result = acquire_chart(again, ["year"], _read(tmp_path), path, HITLISTS, log)
+        assert result.error is None and result.acquired == []
+        assert result.held == 1
+        assert again.fetched == []
+        assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+    def test_only_missing_editions_fetched_and_ids_reused(self, tmp_path):
+        path = tmp_path / "fake.json"
+        acquire_chart(
+            FakeIngestor({2001: [("A", "x")]}), ["year"], None, path, HITLISTS, log
+        )
+        grown = FakeIngestor({2001: [("A", "x")], 2002: [("a", "X"), ("C", "z")]})
+        result = acquire_chart(grown, ["year"], _read(tmp_path), path, HITLISTS, log)
+        assert grown.fetched == [2002]
+        assert result.new_songs == 1
+        data = _read(tmp_path)
+        e2002 = next(e for e in data.editions if e.axes["year"] == 2002)
+        assert [s.id for en in e2002.entries for s in en.songs] == ["1", "2"]
+
+    def test_ingest_error_leaves_file_unchanged(self, tmp_path):
+        path = tmp_path / "fake.json"
+        acquire_chart(
+            FakeIngestor({2001: [("A", "x")]}), ["year"], None, path, HITLISTS, log
+        )
+        before = path.read_bytes()
+        failing = FakeIngestor(
+            {2001: [("A", "x")], 2002: [("B", "y")], 2003: [("C", "z")]}, fail_on=2003
+        )
+        result = acquire_chart(failing, ["year"], _read(tmp_path), path, HITLISTS, log)
+        assert result.error == "source broke on 2003"
+        assert path.read_bytes() == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["fake.json"]
+
+    def test_contract_violation_reported(self, tmp_path):
+        class Broken(FakeIngestor):
+            def fetch(self, ref):
+                return AcquiredEdition(ref, 1, (RawEntry(2, (RawSong("A", "x"),)),))
+
+        result = acquire_chart(
+            Broken({2001: []}), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.error.startswith("ingestor for fake broke its contract:")
+        assert not (tmp_path / "fake.json").exists()
+
+    def test_axes_mismatch_reported_without_fetch(self, tmp_path):
+        ing = FakeIngestor({2001: [("A", "x")]})
+        result = acquire_chart(
+            ing, ["year", "week"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert "['year']" in result.error and "['year', 'week']" in result.error
+        assert ing.fetched == []
+
+    def test_write_error_reported(self, tmp_path, monkeypatch):
+        import beetsplug.hitlisttag.acquire as acquire_module
+
+        def boom(*args, **kwargs):
+            raise OSError("read-only file system")
+
+        monkeypatch.setattr(acquire_module, "write_dataset_file", boom)
+        path = tmp_path / "fake.json"
+        result = acquire_chart(
+            FakeIngestor({2001: [("A", "x")]}), ["year"], None, path, HITLISTS, log
+        )
+        assert result.error == f"cannot write {path}: read-only file system"
+
+    def test_generator_and_repeated_refs_read_once_and_deduplicated(self, tmp_path):
+        # Review focus 3.
+        ing = FakeIngestor(
+            {2001: [("A", "x")], 2002: [("B", "y")]}, as_generator=True, repeat=True
+        )
+        result = acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.error is None
+        assert ing.fetched == [2001, 2002]
+
+    def test_unlisted_editions_kept_and_reported(self, tmp_path):
+        path = tmp_path / "fake.json"
+        acquire_chart(
+            FakeIngestor({1990: [("Old", "one")]}), ["year"], None, path, HITLISTS, log
+        )
+        result = acquire_chart(
+            FakeIngestor({2001: [("A", "x")]}),
+            ["year"],
+            _read(tmp_path),
+            path,
+            HITLISTS,
+            log,
+        )
+        assert result.unlisted == [(1990,)]
+        assert [e.axes["year"] for e in _read(tmp_path).editions] == [1990, 2001]
+
+
+class TestChartResultLines:
+    def test_acquired_line_with_year_ranges(self):
+        refs = [EditionRef({"year": y}) for y in (1999, 2000, 2001, 2005)]
+        r = ChartResult("top2000", acquired=refs, entries=8000, new_songs=4925)
+        assert r.lines(["year"]) == [
+            "top2000: acquired 4 editions (1999–2001, 2005), "
+            "8,000 entries, 4,925 new songs"
+        ]
+
+    def test_single_edition_and_multi_axis(self):
+        one = ChartResult(
+            "top2000", acquired=[EditionRef({"year": 2025})], entries=2000, new_songs=3
+        )
+        assert one.lines(["year"]) == [
+            "top2000: acquired 1 edition (2025), 2,000 entries, 3 new songs"
+        ]
+        refs = [EditionRef({"year": 2024, "week": w}) for w in (1, 2)]
+        multi = ChartResult("top40", acquired=refs, entries=80, new_songs=0)
+        assert multi.lines(["year", "week"]) == [
+            "top40: acquired 2 editions, 80 entries, 0 new songs"
+        ]
+
+    def test_up_to_date_failed_and_unlisted_lines(self):
+        assert ChartResult("x", held=27).lines(["year"]) == [
+            "x: up to date (27 editions)"
+        ]
+        assert ChartResult("x", error="boom").lines(["year"]) == [
+            "x: FAILED — boom; file unchanged"
+        ]
+        r = ChartResult("x", held=3, unlisted=[(1990,), (1991,)])
+        assert r.lines(["year"])[-1] == (
+            "x: 2 editions in the file are not listed by the source (1990–1991); kept"
+        )
