@@ -14,6 +14,7 @@ from beets.ui import CommonOptionsParser, Subcommand
 from beets.util import syspath
 from mediafile import MediaFile, UnreadableFileError
 
+from .acquire import acquire_chart
 from .charts import (
     Chart,
     ChartList,
@@ -23,6 +24,7 @@ from .charts import (
 )
 from .dataset import DatasetError, read_dataset
 from .generate import RunReport, build_chart, merge_charts
+from .ingest import DiscoveryError, discover_ingestors
 from .lookup import SongLookupIndex
 
 log = beets_logging.getLogger("beets.hitlisttag")
@@ -248,7 +250,14 @@ class HitlistTag(BeetsPlugin):
         )
         cmd4.func = self.generate
 
-        return [cmd1, cmd2, cmd3, cmd4]
+        cmd5 = Subcommand(
+            "chartsacquire",
+            help="Acquire missing chart editions into the dataset from public sources",
+        )
+        cmd5.parser.set_usage("%prog [CHART ...]")
+        cmd5.func = self.acquire
+
+        return [cmd1, cmd2, cmd3, cmd4, cmd5]
 
     def show_charts(
         self, lib: Library, opts: CommonOptionsParser, args: list[str]
@@ -428,6 +437,68 @@ class HitlistTag(BeetsPlugin):
             self._generate_item(item, index, report, fmt, hitlists)
         for line in report.lines():
             ui.print_(line)
+
+    def acquire(self, lib: Library, opts: CommonOptionsParser, args: list[str]) -> None:
+        """Acquire missing chart editions into the dataset (chartsacquire)."""
+        dataset_dir = self.dataset_dir
+        if dataset_dir is None:
+            raise ui.UserError(
+                "hitlisttag: chartsacquire requires the dataset_dir option; "
+                "set hitlisttag.dataset_dir in your beets config"
+            )
+        hitlists = self.hitlists
+        try:
+            ingestors = discover_ingestors(self.ingestor_dir, log=self._log)
+        except DiscoveryError as err:
+            raise ui.UserError(f"hitlisttag: {err}") from err
+        try:
+            datasets = (
+                read_dataset(dataset_dir, hitlists, self._log)
+                if dataset_dir.exists()
+                else []
+            )
+        except DatasetError as err:
+            raise ui.UserError(f"hitlisttag: {err}") from err
+        existing = {d.chart: d for d in datasets}
+
+        charts = list(dict.fromkeys(args))
+        if charts:
+            unknown = [c for c in charts if c not in ingestors]
+            if unknown:
+                raise ui.UserError(
+                    f"hitlisttag: no ingestor for {', '.join(unknown)}; "
+                    f"available: {', '.join(sorted(ingestors)) or 'none'}"
+                )
+            unconfigured = [c for c in charts if c not in hitlists]
+            if unconfigured:
+                raise ui.UserError(
+                    f"hitlisttag: {', '.join(unconfigured)} is not a configured "
+                    "hitlist; add it to hitlisttag.hitlists"
+                )
+        else:
+            for chart in sorted(set(ingestors) - set(hitlists)):
+                self._log.info(f"skipping ingestor for unconfigured chart {chart!r}")
+            charts = sorted(c for c in ingestors if c in hitlists)
+            if not charts:
+                raise ui.UserError(
+                    "hitlisttag: no ingestor serves any configured hitlist"
+                )
+
+        failed: list[str] = []
+        for chart in charts:
+            data = existing.get(chart)
+            path = data.source if data else dataset_dir / f"{chart}.json"
+            result = acquire_chart(
+                ingestors[chart], hitlists[chart], data, path, hitlists, self._log
+            )
+            for line in result.lines(hitlists[chart]):
+                ui.print_(line)
+            if result.error is not None:
+                failed.append(chart)
+        if failed:
+            raise ui.UserError(
+                f"hitlisttag: acquisition failed for {', '.join(failed)}"
+            )
 
     def _generate_item(
         self,

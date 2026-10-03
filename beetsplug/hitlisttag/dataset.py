@@ -26,6 +26,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -251,3 +253,151 @@ def _parse_entries(
             resolved.append(songs[sid])
         entries.append(Entry(position=pos, songs=resolved))
     return entries
+
+
+def _is_numeric_id(song_id: str) -> bool:
+    """True for an ASCII-digit id. ``str.isdigit`` alone accepts ``"²"``,
+    which ``int`` then rejects."""
+    return song_id.isascii() and song_id.isdigit()
+
+
+def _id_sort_key(song_id: str) -> tuple[int, int, str]:
+    """Numeric ids first, in numeric order; any other id after, by text."""
+    if _is_numeric_id(song_id):
+        return (0, int(song_id), "")
+    return (1, 0, song_id)
+
+
+def dump_dataset(data: HitlistData) -> str:
+    """Serialize ``data`` in the documented on-disk shape.
+
+    Songs are ordered by id (numerically where numeric) and entries by
+    position; editions keep the order of ``data.editions``. UTF-8 text with
+    non-ASCII kept readable, 2-space indent, trailing newline.
+    """
+    payload = {
+        "chart": data.chart,
+        "songs": {
+            sid: {"artist": song.artist, "title": song.title}
+            for sid, song in sorted(
+                data.songs.items(), key=lambda item: _id_sort_key(item[0])
+            )
+        },
+        "editions": [
+            {
+                "axes": dict(edition.axes),
+                "size": edition.size,
+                "entries": [
+                    {"position": entry.position, "songs": [s.id for s in entry.songs]}
+                    for entry in sorted(edition.entries, key=lambda e: e.position)
+                ],
+            }
+            for edition in data.editions
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def _shape(data: HitlistData) -> tuple:
+    """Order-insensitive comparable form of the data a file round-trips."""
+    songs = {sid: (song.artist, song.title) for sid, song in data.songs.items()}
+    editions = sorted(
+        (
+            tuple(sorted(edition.axes.items())),
+            edition.size,
+            tuple(
+                sorted(
+                    (e.position, tuple(s.id for s in e.songs)) for e in edition.entries
+                )
+            ),
+        )
+        for edition in data.editions
+    )
+    return songs, editions
+
+
+def write_dataset_file(
+    data: HitlistData,
+    path: Path,
+    hitlists: Mapping[str, list[str]],
+    log: logging.Logger,
+) -> None:
+    """Atomically replace ``path`` with ``data``, or leave it untouched.
+
+    The text goes to a temp file in the same directory, which is then
+    re-read with the dataset reader itself; only a file the reader accepts
+    replaces ``path``. Any failure before the replace removes the temp file
+    and leaves ``path`` byte-for-byte as it was. The temp name ends in
+    ``.json.tmp`` so a stale one is never read as a dataset file.
+    """
+    # Write through a symlinked file to its target, so the link survives.
+    path = Path(path).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.stem}.", suffix=".json.tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(dump_dataset(data))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, mode)
+        try:
+            reread = _read_file(tmp, hitlists, log)
+        except DatasetError as err:
+            raise DatasetError(f"internal error writing {data.chart}: {err}") from err
+        if reread is None:
+            raise DatasetError(
+                f"internal error writing {data.chart}: not a configured hitlist"
+            )
+        if _shape(reread) != _shape(data):
+            raise DatasetError(
+                f"internal error writing {data.chart}: the re-read file does not "
+                "match the data written"
+            )
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+_DOCUMENTED_FIELDS = {
+    "top-level": {"chart", "songs", "editions"},
+    "song": {"artist", "title"},
+    "edition": {"axes", "size", "entries"},
+    "entry": {"position", "songs"},
+}
+
+
+def unknown_fields(path: Path) -> list[str]:
+    """Fields in a dataset file that the format does not document.
+
+    The reader ignores them, so a rewrite through ``dump_dataset`` would
+    silently drop them; callers that rewrite a file check this first. The
+    file is assumed to have passed the reader already. It is re-parsed here
+    as raw JSON because the reader's typed model has nowhere to keep fields
+    it does not know.
+    """
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    found = [
+        f"top-level {k!r}" for k in raw if k not in _DOCUMENTED_FIELDS["top-level"]
+    ]
+    for sid, song in raw.get("songs", {}).items():
+        found += [
+            f"song {sid!r} {k!r}" for k in song if k not in _DOCUMENTED_FIELDS["song"]
+        ]
+    for i, edition in enumerate(raw.get("editions", [])):
+        found += [
+            f"edition {i} {k!r}"
+            for k in edition
+            if k not in _DOCUMENTED_FIELDS["edition"]
+        ]
+        for entry in edition.get("entries", []):
+            found += [
+                f"edition {i} entry {k!r}"
+                for k in entry
+                if k not in _DOCUMENTED_FIELDS["entry"]
+            ]
+    return found

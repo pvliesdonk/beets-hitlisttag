@@ -75,6 +75,12 @@ from that dataset. `stated`.
   package as an additional executable, not as a separate distribution:
   without acquisition the generation side is useless, because chart data
   cannot be redistributed (see next item). `stated` (2026-08-04).
+  *Wording revised by the user (2026-10-03, `stated`):* the bundled tool
+  is a beets subcommand, `beet chartsacquire`, rather than a separate
+  executable, so it reuses the plugin's configuration with no
+  duplication. The substance — one package, acquisition bundled, no
+  separate distribution — is unchanged (`evidenced`:
+  [#100](https://github.com/pvliesdonk/beets-hitlisttag/issues/100)).
 - **No chart data is shipped or published.** Complete publication of chart
   listings likely raises copyright problems for at least some lists.
   `stated` (2026-08-04). Consequence: each user regenerates the dataset
@@ -469,3 +475,9 @@ remain. `derived`.
   not after the Top 2000 ingestor — the graph edge on #72 repointed from
   #102 to #74, and milestone 10's first ingestor is pulled ahead of
   milestone 8. The ingestor contract (#99) shipped the same day.
+- 2026-10-03 — the acquisition tool (#100) became a beets subcommand,
+  `beet chartsacquire`, by user decision, revising the wording of the
+  `stated` "additional executable" item; its substance holds. A plain run
+  acquires only missing editions from the first release, and writes are
+  all-or-nothing per chart (temp file, re-read with the real reader,
+  atomic replace) — the milestone 6 failure-state lesson decided up front.
