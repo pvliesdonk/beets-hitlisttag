@@ -574,11 +574,11 @@ remain. `derived`.
   `chartsacquire` robustness gaps (#114) join this milestone, since
   routine runs over three bundled charts make one ingestor's crash
   stopping the rest matter. Four decisions from the owner this session,
-  each from an agent proposal: #72 now waits on the Top 100 ingestor
-  rather than the Top 40, either serving since both lists are views of
-  the same data; the partial-progress question is recorded as an
-  unknown for the spike, not filed as a feature; #114 moves in; the
-  spike's appetite is one day. Coverage against the frozen criterion:
+  each from an agent proposal: either raw-published ingestor may unblock
+  #72, since both lists are views of the same data (choosing the Top 100,
+  #117, as the edge is the agent's call, `derived`); the partial-progress
+  question is recorded as an unknown for the spike, not filed as a
+  feature; #114 moves in; the spike's appetite is one day. Coverage against the frozen criterion:
   *populated from public sources* is #116–#118; *kept current with
   routine runs* rests on milestone 7's incremental refresh plus #114,
   #120, and whatever the partial-progress unknown turns up; the
