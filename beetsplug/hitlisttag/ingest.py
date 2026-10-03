@@ -24,7 +24,7 @@ import pkgutil
 import stat
 import sys
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol, runtime_checkable
@@ -49,6 +49,11 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _is_text(value: object) -> bool:
+    """True for a string with something other than whitespace in it."""
+    return isinstance(value, str) and bool(value.strip())
+
+
 @dataclass(frozen=True)
 class RawSong:
     """One credited song, exactly as published."""
@@ -70,10 +75,16 @@ class RawEntry:
     More than one song only when the source itself lists them separately;
     an ingestor never splits an "A / B" title -- song resolution is the
     ontology's job.
+
+    ``source_ids`` holds the identifiers the source publishes for this
+    entry, raw, keyed ``<source>/<kind>`` (``{"top40.nl/title": "8522"}``).
+    Optional; the framework stores them and never interprets them, so they
+    never change which song an entry resolves to.
     """
 
     position: int
     songs: tuple[RawSong, ...]
+    source_ids: Mapping[str, str] = field(default_factory=dict, hash=False)
 
     def __post_init__(self) -> None:
         if not _is_int(self.position) or self.position < 1:
@@ -86,6 +97,15 @@ class RawEntry:
         object.__setattr__(self, "songs", tuple(self.songs))
         if not self.songs:
             raise ValueError(f"entry at position {self.position} must have songs")
+        ids = self.source_ids
+        if not isinstance(ids, Mapping) or not all(
+            _is_text(key) and _is_text(value) for key, value in ids.items()
+        ):
+            raise ValueError(
+                "source_ids must map non-empty strings to non-empty strings"
+            )
+        # Copy behind a read-only view, as EditionRef does with its axes.
+        object.__setattr__(self, "source_ids", MappingProxyType(dict(ids)))
 
 
 @dataclass(frozen=True, eq=False)
