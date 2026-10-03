@@ -141,8 +141,9 @@ takes care of the parts that are easy to get wrong:
 - every failure becomes an `IngestError`, so `chartsacquire` reports it as
   a clean failure line.
 
-`get(url)` returns the page text, or `None` when the page does not exist
-(HTTP 404). What a missing page means is up to your ingestor: below, it
+`get(url)` returns the page text, decoded with the charset the site
+declares (UTF-8 when it declares none), or `None` when the page does not
+exist (HTTP 404). What a missing page means is up to your ingestor: below, it
 marks the end of the years the site has.
 
 This example reads a site that publishes one CSV file per year:

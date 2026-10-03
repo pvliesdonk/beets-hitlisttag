@@ -123,7 +123,7 @@ class Fetcher:
         self._sleep = sleep
         self._last_start: float | None = None
         if cache_dir is None and os.environ.get(CACHE_ENV):
-            cache_dir = Path(os.environ[CACHE_ENV])
+            cache_dir = Path(os.environ[CACHE_ENV]).expanduser()
         self._cache_dir = cache_dir
 
         retry = Retry(
@@ -144,17 +144,25 @@ class Fetcher:
         self._session.mount("http://", _Adapter(max_retries=retry))
 
     def get(self, url: str) -> str | None:
-        """The page text; ``None`` for a 404; ``IngestError`` otherwise."""
+        """The page text (UTF-8 unless the site declares a charset); ``None``
+        for a 404; ``IngestError`` otherwise."""
         base = None
         if self._cache_dir is not None:
             base = _cache_base(self._cache_dir, url)
-            page = base.with_name(base.name + ".page")
-            if page.is_file():
-                _log.debug(f"cache hit: {url}")
-                return page.read_text(encoding="utf-8")
-            if base.with_name(base.name + ".404").is_file():
-                _log.debug(f"cache hit (404): {url}")
-                return None
+            try:
+                page = base.with_name(base.name + ".page")
+                if page.is_file():
+                    _log.debug(f"cache hit: {url}")
+                    # newline="": the page comes back exactly as fetched (CRLF too).
+                    with open(page, encoding="utf-8", newline="") as fh:
+                        return fh.read()
+                if base.with_name(base.name + ".404").is_file():
+                    _log.debug(f"cache hit (404): {url}")
+                    return None
+            except (OSError, UnicodeDecodeError) as err:
+                raise IngestError(
+                    f"cannot use the development cache at {self._cache_dir}: {err}"
+                ) from err
             _log.debug(f"cache miss: {url}")
         text = self._fetch(url)
         if base is not None:
@@ -178,6 +186,11 @@ class Fetcher:
             return None
         if response.status_code != 200:
             raise IngestError(f"cannot fetch {url}: HTTP {response.status_code}")
+        if "charset" not in response.headers.get("Content-Type", "").lower():
+            # requests would fall back to ISO-8859-1 for text/* (or guess for
+            # other types); chart pages without a declared charset are UTF-8
+            # in practice, and a fixed choice keeps the cache deterministic.
+            response.encoding = "utf-8"
         return response.text
 
     def _store(self, base: Path, text: str | None) -> None:
@@ -187,7 +200,7 @@ class Fetcher:
             target.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".tmp-")
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
                     fh.write(text or "")
                 os.replace(tmp, target)
             except BaseException:

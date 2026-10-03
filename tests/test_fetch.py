@@ -32,7 +32,7 @@ class _Script:
 
 @pytest.fixture
 def server():
-    """A local HTTP server: each path serves its queue of (status, body).
+    """A local HTTP server: each path serves its queue of (status, body[, type]).
 
     The last entry of a queue repeats; unknown paths are 404.
     """
@@ -42,10 +42,12 @@ def server():
         def do_GET(self):
             script.requests.append((self.path, self.headers.get("User-Agent")))
             queue = script.routes.get(self.path, [(404, "")])
-            status, body = queue.pop(0) if len(queue) > 1 else queue[0]
+            status, body, *ctype = queue.pop(0) if len(queue) > 1 else queue[0]
             data = body.encode("utf-8")
             self.send_response(status)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header(
+                "Content-Type", ctype[0] if ctype else "text/html; charset=utf-8"
+            )
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
@@ -343,3 +345,43 @@ class TestCacheNames:
     def test_unsafe_characters_are_encoded(self, tmp_path):
         base = _cache_base(tmp_path, "https://h.example:8080/a:b")
         assert base == tmp_path / "h.example%3A8080" / "a%3Ab"
+
+
+class TestReviewFixes:
+    """Findings from the whole-branch review (#126)."""
+
+    def test_crlf_and_lone_cr_round_trip_through_cache(self, server, tmp_path):
+        text = "line1\r\nline2\r\n\r\nline4 é\r"
+        server.routes["/crlf"] = [(200, text)]
+        assert make(cache_dir=tmp_path).get(server.base + "/crlf") == text
+        assert make(cache_dir=tmp_path).get(server.base + "/crlf") == text
+
+    def test_text_without_charset_is_decoded_as_utf8(self, server):
+        server.routes["/list.csv"] = [(200, "1,Mötley Crüe,Kickstart", "text/csv")]
+        assert make().get(server.base + "/list.csv") == "1,Mötley Crüe,Kickstart"
+
+    def test_html_without_charset_is_decoded_as_utf8(self, server):
+        server.routes["/p"] = [(200, "<p>Zoë Livay</p>", "text/html")]
+        assert make().get(server.base + "/p") == "<p>Zoë Livay</p>"
+
+    def test_declared_charset_is_respected(self, server):
+        # The handler always sends UTF-8 bytes; declaring latin-1 must win.
+        server.routes["/l"] = [(200, "é", "text/plain; charset=ISO-8859-1")]
+        assert make().get(server.base + "/l") == "Ã©"
+
+    def test_unreadable_cached_page_is_ingest_error(self, server, tmp_path):
+        server.routes["/a"] = [(200, "x")]
+        make(cache_dir=tmp_path).get(server.base + "/a")
+        page = next(tmp_path.rglob("a.page"))
+        page.write_bytes(b"caf\xe9 latin-1")
+        with pytest.raises(IngestError, match="development cache"):
+            make(cache_dir=tmp_path).get(server.base + "/a")
+
+    def test_tilde_in_env_variable_is_expanded(self, server, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(CACHE_ENV, "~/devcache")
+        server.routes["/a"] = [(200, "x")]
+        make().get(server.base + "/a")
+        assert len(list((tmp_path / "devcache").rglob("a.page"))) == 1
+        assert not (tmp_path / "~").exists()
