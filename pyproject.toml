@@ -28,6 +28,10 @@ dependencies = [
     "beets>=2.12",
     "mediafile>=0.17.0",
     "requests>=2.25",
+    # Imported directly by beetsplug/hitlisttag/fetch.py; Retry(allowed_methods=)
+    # needs urllib3 1.26, which no requests floor guarantees on its own.
+    "urllib3>=1.26",
+    "certifi",
 ]
 
 [project.urls]
