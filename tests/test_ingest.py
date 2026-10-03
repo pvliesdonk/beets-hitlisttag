@@ -110,6 +110,22 @@ class TestRawEntry:
         assert a != b
         assert hash(a) == hash(b)
 
+    @pytest.mark.parametrize("ids", [{}, {"top40.nl/title": "1"}])
+    def test_entries_pickle_deepcopy_and_asdict(self, ids):
+        # Review: a third-party ingestor may parse pages in a process pool or
+        # cache entries; RawEntry was picklable before source_ids existed.
+        import copy
+        import dataclasses
+        import pickle
+
+        entry = RawEntry(1, (_song(),), ids)
+        assert pickle.loads(pickle.dumps(entry)) == entry
+        assert copy.deepcopy(entry) == entry
+        assert dataclasses.asdict(entry)["source_ids"] == ids
+        clone = pickle.loads(pickle.dumps(entry))
+        with pytest.raises(TypeError):
+            clone.source_ids["x/y"] = "z"
+
 
 class TestEditionRef:
     def test_equality_and_hash_by_axes(self):

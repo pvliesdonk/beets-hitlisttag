@@ -49,6 +49,24 @@ def _is_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+class _ReadOnlyDict(dict):
+    """A dict that refuses changes.
+
+    Used for ``RawEntry.source_ids`` instead of a ``MappingProxyType``, which
+    cannot be pickled or deep-copied: an ingestor may parse pages in a
+    process pool or cache its entries, and a ``RawEntry`` must survive that.
+    """
+
+    def _refuse(self, *args, **kwargs):
+        raise TypeError("source_ids is read-only")
+
+    __setitem__ = __delitem__ = __ior__ = _refuse
+    clear = pop = popitem = setdefault = update = _refuse
+
+    def __reduce__(self):
+        return (_ReadOnlyDict, (dict(self),))
+
+
 def _is_text(value: object) -> bool:
     """True for a string with something other than whitespace in it."""
     return isinstance(value, str) and bool(value.strip())
@@ -97,15 +115,20 @@ class RawEntry:
         object.__setattr__(self, "songs", tuple(self.songs))
         if not self.songs:
             raise ValueError(f"entry at position {self.position} must have songs")
-        ids = self.source_ids
-        if not isinstance(ids, Mapping) or not all(
+        # Copy first, then validate the copy, so a mapping that changes
+        # between reads cannot slip past the check; the copy is read-only.
+        ids = (
+            _ReadOnlyDict(self.source_ids)
+            if isinstance(self.source_ids, Mapping)
+            else None
+        )
+        if ids is None or not all(
             _is_text(key) and _is_text(value) for key, value in ids.items()
         ):
             raise ValueError(
                 "source_ids must map non-empty strings to non-empty strings"
             )
-        # Copy behind a read-only view, as EditionRef does with its axes.
-        object.__setattr__(self, "source_ids", MappingProxyType(dict(ids)))
+        object.__setattr__(self, "source_ids", ids)
 
 
 @dataclass(frozen=True, eq=False)
