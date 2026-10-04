@@ -29,6 +29,12 @@ from .lookup import SongLookupIndex
 
 log = beets_logging.getLogger("beets.hitlisttag")
 
+
+def _listed(positions: list[int]) -> str:
+    """Positions as collapsed ranges for the missing-report, or "none"."""
+    return _collapse_range(positions) or "none"
+
+
 # Shipped hitlist definitions: name -> list of axis names. Used as the
 # default for the `hitlists` config key. A present key replaces these
 # defaults (it does not merge); the resolved definitions at runtime come
@@ -413,9 +419,7 @@ class HitlistTag(BeetsPlugin):
             ui.print_(f"No positions found for hitlist {hitlist} for {when}.")
             if size is not None:
                 missing = list(range(1, size + 1))
-                ui.print_(
-                    f"Missing the following positions: {_collapse_range(missing)}"
-                )
+                ui.print_(f"Missing the following positions: {_listed(missing)}")
             return
 
         found = {x[0] for x in result}
@@ -435,13 +439,11 @@ class HitlistTag(BeetsPlugin):
                 missing = [x for x in range(1, top) if x not in found]
                 ui.print_(
                     f"Missing the following positions (up to {top}, the highest "
-                    f"found; edition size unknown): {_collapse_range(missing)}"
+                    f"found; edition size unknown): {_listed(missing)}"
                 )
             else:
                 missing = [x for x in range(1, size + 1) if x not in found]
-                ui.print_(
-                    f"Missing the following positions: {_collapse_range(missing)}"
-                )
+                ui.print_(f"Missing the following positions: {_listed(missing)}")
 
     def _edition_size(self, hitlist: str, axes: dict[str, int]) -> int | None:
         """The declared size of one edition in the chart dataset.

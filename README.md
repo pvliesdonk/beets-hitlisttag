@@ -243,12 +243,13 @@ also takes a week. The `-M` / `--missing` flag reports any positions that
 are absent from the library. When `dataset_dir` is set and the chart
 dataset holds that edition, the report runs up to the edition's declared
 size: it also lists positions above the highest one in the library, and the
-whole edition when the library holds none of it. Otherwise the edition's
-size is unknown and the report runs only up to the highest position found,
-which it says. A dataset that cannot be read gives a warning and the same
-fallback. The `-p` / `--path` flag prints file paths instead of the
-formatted string. The `-f` / `--format` option overrides the display format
-(default: `$artist - $album - $title`).
+whole edition when the library holds none of it; a library position beyond
+the declared size is listed but does not widen the report. Otherwise the
+edition's size is unknown and the report runs only up to the highest
+position found, which it says. A dataset that cannot be read gives a
+warning and the same fallback. The `-p` / `--path` flag prints file paths
+instead of the formatted string. The `-f` / `--format` option overrides the
+display format (default: `$artist - $album - $title`).
 
 ```
 beet hitlist top2000 2023
@@ -384,10 +385,11 @@ argument per axis, in order; a single-axis hitlist like `top2000` takes a
 year, while the two-axis `top40` takes a year and a week. An entry whose
 axes are not a non-empty list of strings is dropped with a warning.
 
-The chart dataset used by `chartsgen` is located by the `dataset_dir`
-key (unset by default; `chartsgen` errors until it is configured). A
-relative path is resolved against the beets configuration directory, and
-`~` is expanded:
+The chart dataset used by `chartsgen`, `chartsacquire` and `hitlist -M`
+is located by the `dataset_dir` key (unset by default; `chartsgen` and
+`chartsacquire` error until it is configured, and `hitlist -M` falls back
+to the highest position found). A relative path is resolved against the
+beets configuration directory, and `~` is expanded:
 
 ```yaml
 hitlisttag:
