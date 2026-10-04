@@ -21,6 +21,8 @@ the live site at the milestone's closeout, not here.
 from __future__ import annotations
 
 import itertools
+import logging
+import os
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,6 +41,11 @@ ROOT = Path(__file__).resolve().parent.parent
 RSRC = ROOT / "tests" / "rsrc"
 HITLISTS = {"top100": ["year"], "top40": ["year", "week"]}
 INDEX = top100.INDEX_PATH
+# Test seam: the real table lists every week since 1965 (3,194 pages). A
+# one-year table keeps the same code path: table years, then a year after
+# the table, read from its first week's "previous" link.
+TABLE = {2024: 2}
+log = logging.getLogger("test.coverage_acceptance")
 
 _ITEM = """
 <div class="top40-list__item">
@@ -109,7 +116,9 @@ class FakeSite:
     def publish_top40(self, latest: tuple[int, int], weeks) -> None:
         self.pages["/top40"] = _week_page(*latest)
         for year, week in weeks:
-            previous = (year - 1, 2) if week == 1 else None
+            # The first week after the table links the table's last week.
+            after_table = week == 1 and year - 1 in TABLE
+            previous = (year - 1, TABLE[year - 1]) if after_table else None
             self.pages[f"/top40/{year}/week-{week}"] = _week_page(year, week, previous)
 
     def send(self, adapter, request, **kwargs) -> requests.Response:
@@ -139,10 +148,7 @@ def env(tmp_path, monkeypatch):
         lambda adapter, request, **kw: site.send(adapter, request, **kw),
     )
     monkeypatch.setattr(top40nl, "MIN_INTERVAL", 0)
-    # Test seam: the real table lists every week since 1965 (3,194 pages).
-    # A one-year table keeps the same code path: table years, then a year
-    # after the table read from its first week's "previous" link.
-    monkeypatch.setattr(top40, "LAST_WEEK", {2024: 2})
+    monkeypatch.setattr(top40, "LAST_WEEK", TABLE)
     (tmp_path / "ingestors").mkdir()
     helper = TestHelper()
     with helper:
@@ -177,17 +183,11 @@ def _routine_run(env) -> None:
 
 
 def _editions(env) -> dict[str, list]:
-    datasets = {d.chart: d for d in read_dataset(env.data, HITLISTS, _log())}
+    datasets = {d.chart: d for d in read_dataset(env.data, HITLISTS, log)}
     return {
         chart: [(tuple(e.axes.values()), e.size) for e in data.editions]
         for chart, data in datasets.items()
     }
-
-
-def _log():
-    import logging
-
-    return logging.getLogger("test.coverage_acceptance")
 
 
 def _initial_site(env) -> None:
@@ -254,7 +254,11 @@ class TestAcceptance:
         assert editions["top40"][-1] == ((2025, 3), 40)
 
         # Nothing new: nothing is fetched beyond the listings, nothing written.
+        # Backdate the files first, so a rewrite shows in the mtime even on a
+        # filesystem with coarse timestamps.
         files = [env.data / "top100.json", env.data / "top40.json"]
+        for f in files:
+            os.utime(f, ns=(f.stat().st_atime_ns, f.stat().st_mtime_ns - 10**10))
         before = [(f.read_bytes(), f.stat().st_mtime_ns) for f in files]
         _routine_run(env)
 
@@ -271,6 +275,8 @@ class TestAcceptance:
         _routine_run(env)
         for p in (3, 7):
             _add_file_item(env, f"Pretend Artist {p}", f"Made Up Song {p}")
+        # Every synthetic week has the same names, so this track charts at 5
+        # in all four weeks; the report below is for 2025 week 1.
         _add_file_item(env, "Weekly Act 5", "Weekly Tune 5")
         env.plugin.generate(env.helper.lib, SimpleNamespace(), [])
         capsys.readouterr()
