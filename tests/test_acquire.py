@@ -1426,3 +1426,26 @@ class TestFailedEditionsNamed:
         assert "fake: 1982 week 1 failed: Top 40 1982 week 1: page not found" in (
             caplog.text
         )
+
+    def test_bug_and_ctrl_c_are_not_logged_as_failed_editions(self, tmp_path, caplog):
+        for outcome in (RuntimeError("bug"), KeyboardInterrupt()):
+            caplog.clear()
+            with caplog.at_level(logging.WARNING):
+                acquire_chart(
+                    Scripted({2001: outcome}),
+                    ["year"],
+                    None,
+                    tmp_path / "fake.json",
+                    HITLISTS,
+                    log,
+                )
+            assert " failed: " not in caplog.text
+
+    def test_three_axes_listed_one_by_one(self):
+        r = ChartResult(
+            "x",
+            failed=[(EditionRef({"year": 2001, "week": 2, "day": 5}), "boom")],
+        )
+        assert r.lines(["year", "week", "day"])[0] == (
+            "x: 1 edition failed (2001 week 2 day 5): boom; a later run retries them"
+        )

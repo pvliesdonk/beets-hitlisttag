@@ -317,7 +317,7 @@ top2000: up to date (27 editions)
 top2000: 2 editions in the file are not listed by the source (1990–1991); kept
 top2000: dropped 2 editions not listed by the source (1990–1991)
 top100: 2 editions failed (1965, 1971): <reason>; a later run retries them
-top40: 4 editions failed (1982 week 1, 2005 weeks 1–3): <reason>; a later run retries them
+top40: 3 editions failed (1982 week 1, 2005 weeks 1–2): <reason>; a later run retries them
 top100: stopped after 3 failed editions in a row; 40 editions not attempted
 kerst: FAILED — <reason>; file unchanged
 kerst: FAILED — <reason>; file keeps the editions written before it
