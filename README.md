@@ -317,6 +317,7 @@ top2000: up to date (27 editions)
 top2000: 2 editions in the file are not listed by the source (1990–1991); kept
 top2000: dropped 2 editions not listed by the source (1990–1991)
 top100: 2 editions failed (1965, 1971): <reason>; a later run retries them
+top40: 4 editions failed (1982 week 1, 2005 weeks 1–3): <reason>; a later run retries them
 top100: stopped after 3 failed editions in a row; 40 editions not attempted
 kerst: FAILED — <reason>; file unchanged
 kerst: FAILED — <reason>; file keeps the editions written before it
@@ -458,9 +459,11 @@ A run fetches only what the dataset lacks, so the day doesn't matter:
 a run before a new chart is published picks it up the week after.
 
 **If a chart fails.** A `FAILED` line or *editions failed* usually
-means its source was down or has changed; the line gives the reason
-(with several failed editions, the last one's). The next run retries
-what is missing. If an ingestor itself crashed,
+means its source was down or has changed. The *editions failed* line
+names the editions and gives the last one's reason; each failed edition
+is also logged as a warning with its own reason, such as
+`top40: 1982 week 1 failed: Top 40 1982 week 1: page not found`. The
+next run retries what is missing. If an ingestor itself crashed,
 `beet -v chartsacquire CHART` shows the traceback.
 
 **The Top 2000 in December** is skipped until Wikipedia has the whole

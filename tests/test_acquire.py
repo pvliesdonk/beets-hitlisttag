@@ -365,13 +365,13 @@ class TestChartResultLines:
             "x: stopped after 3 failed editions in a row; 1,200 editions not attempted",
         ]
 
-    def test_failed_line_has_no_span_with_two_axes(self):
+    def test_failed_line_names_two_axis_editions(self):
         r = ChartResult(
             "top40",
             failed=[(EditionRef({"year": 1965, "week": 3}), "boom")],
         )
         assert r.lines(["year", "week"]) == [
-            "top40: 1 edition failed: boom; a later run retries them"
+            "top40: 1 edition failed (1965 week 3): boom; a later run retries them"
         ]
 
     def test_only_failures_is_not_up_to_date(self):
@@ -1361,3 +1361,68 @@ class TestReviewFixes114:
             "fake: interrupted; file keeps the editions written before it",
         ]
         assert _years(tmp_path) == [2001]
+
+
+class TestFailedEditionsNamed:
+    """#151: which editions failed, and why, for charts with two axes too."""
+
+    def test_weeks_grouped_by_year_with_ranges(self):
+        weeks = [(1982, 1), (1983, 1), (2005, 1), (2005, 2), (2005, 3), (2005, 7)]
+        r = ChartResult(
+            "top40",
+            failed=[
+                (EditionRef({"year": y, "week": w}), f"{y}/{w} broke") for y, w in weeks
+            ],
+        )
+        assert r.lines(["year", "week"]) == [
+            "top40: 6 editions failed (1982 week 1, 1983 week 1, 2005 weeks 1–3, 7): "
+            "2005/7 broke; a later run retries them"
+        ]
+
+    def test_refs_lacking_an_axis_are_left_out_of_the_list(self):
+        r = ChartResult(
+            "top40",
+            failed=[
+                (EditionRef({"year": 1990, "week": 4}), "boom"),
+                (EditionRef({"week": 3}), "no year"),
+            ],
+        )
+        assert r.lines(["year", "week"])[0] == (
+            "top40: 2 editions failed (1990 week 4): no year; a later run retries them"
+        )
+
+    def test_each_failure_is_logged_with_its_own_reason(self, tmp_path, caplog):
+        plan = {
+            2001: IngestError("source {down}"),
+            2002: ("A", "x"),
+            2003: IngestError("page not found"),
+        }
+        with caplog.at_level(logging.WARNING):
+            acquire_chart(
+                Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+            )
+        warnings = [
+            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
+        ]
+        assert warnings == [
+            "fake: 2001 failed: source {down}",
+            "fake: 2003 failed: page not found",
+        ]
+
+    def test_two_axis_failure_log_names_the_week(self, tmp_path, caplog):
+        class Weekly(Scripted):
+            axes = ("year", "week")
+
+            def editions(self):
+                return [EditionRef({"year": 1982, "week": 1})]
+
+            def fetch(self, ref):
+                raise IngestError("Top 40 1982 week 1: page not found")
+
+        with caplog.at_level(logging.WARNING):
+            acquire_chart(
+                Weekly({}), ["year", "week"], None, tmp_path / "f.json", HITLISTS, log
+            )
+        assert "fake: 1982 week 1 failed: Top 40 1982 week 1: page not found" in (
+            caplog.text
+        )

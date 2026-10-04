@@ -416,3 +416,11 @@ class TestUnexpectedEnds:
             _run(env, "fake")
         assert "RuntimeError: bad {key}" in caplog.text
         assert "Traceback" in caplog.text
+
+    def test_failed_edition_logged_with_its_reason(self, env, caplog):
+        FakeSource(env.ingestors, "fake").set(
+            {2001: [["A", "x"]], 2002: [["B", "y"]]}, fail_on=2002
+        )
+        with caplog.at_level(logging.WARNING), pytest.raises(ui.UserError):
+            _run(env, "fake")
+        assert "fake: 2002 failed: source broke on 2002" in caplog.text
