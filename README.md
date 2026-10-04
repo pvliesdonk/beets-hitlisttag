@@ -347,9 +347,9 @@ Stichting Nederlandse Top 40:
   writes a dataset file of about 28 MB; later runs fetch only the new
   weeks.
 
-Both send at most one request per second and identify themselves as
-`beets-hitlisttag/<version>` with this repository's URL. There is no
-setting for either.
+Both fetch at most one page per second (a retry after a server error
+can follow sooner) and identify themselves as `beets-hitlisttag/<version>`
+with this repository's URL. There is no setting for either.
 
 The site reserves copyright and database rights over its charts. What
 `chartsacquire` stores is your private copy: don't publish or share the
@@ -357,8 +357,8 @@ dataset files.
 
 Entries are stored as the site publishes them. The site merges versions
 of a song into one entry (`Artist A / Artist B`, `Title ((1965))`) and
-lists double A-sides as `Side A ; Side B`. `chartsgen`'s exact matching
-doesn't connect these entries to your tracks; telling which song an
+lists double A-sides as `Side A ; Side B`. `chartsgen` doesn't connect
+these entries to your tracks; telling which song an
 entry means is planned work ([roadmap](docs/roadmap.md), song ontology
 and curation). Each entry also keeps the site's own ids in `source_ids`.
 
@@ -367,8 +367,8 @@ charts, and can differ from the list printed at the time.
 
 `top40` uses the site's week numbers. A year has 51, 52 or 53 weeks,
 and in 1982, 1983, 1988, 1993, 1994, 1997, 1998, 1999, 2000 and 2005 the
-first chart of the year is week 2, so `beet hitlist top40 1982 1` finds
-nothing. Week pages shorten long names with `..`; the ingestor restores
+first chart of the year is week 2, so `beet hitlist top40 1982 1`
+reports no positions. Week pages shorten long names with `..`; the ingestor restores
 the full name from the same page, or keeps the shortened one with a
 warning when it can't.
 
@@ -414,27 +414,33 @@ values, and it materializes the same per-chart flexible fields as
 `chartsupdate`, making generated tags indistinguishable downstream from
 externally produced ones.
 
-### Keeping the dataset current
+## Keeping the dataset current
 
-New editions keep appearing: a Top 40 every week, a Top 100 after each
-year, a Top 2000 each December. To keep your dataset and tags current,
-run `chartsacquire` and then `chartsgen` on a schedule.
+Run `chartsacquire` and then `chartsgen` on a schedule to keep your
+dataset and tags current. New editions keep appearing: a Top 40 every
+week, a Top 100 after each year, a Top 2000 each December.
 
-1. Find the full path to `beet` (`command -v beet`); cron doesn't use
-   your shell's `PATH`.
-2. Add a weekly job with `crontab -e`, for example Saturday at 09:30:
+1. Note the full path of the `beet` executable, for example
+   `/home/you/.local/bin/beet`; cron doesn't use your shell's `PATH`.
+   If you point beets at its configuration with `BEETSDIR` or
+   `XDG_CONFIG_HOME` in a shell startup file, cron won't see that
+   either: set it in the crontab, or pass `-c /path/to/config.yaml` to
+   each `beet`.
+2. Add a weekly job with `crontab -e`, for example Sunday at 09:30:
 
    ```
-   30 9 * * 6  /path/to/beet chartsacquire; /path/to/beet chartsgen > ~/charts/chartsgen.log
+   30 9 * * 0  /path/to/beet chartsacquire; /path/to/beet chartsgen > ~/charts/chartsgen.log
    ```
 
    Use `;` rather than `&&`: `chartsacquire` exits with an error when
    any chart had a failure, and `chartsgen` should still run for the
    charts that succeeded. `chartsgen`'s report lists every track it
-   couldn't match, so it goes to a log file; its errors still reach
-   cron's mail.
-3. Read the output cron mails you. A week with one new Top 40 chart
-   looks like this:
+   couldn't match, so it goes to a log file, in a folder that must
+   already exist; its errors still reach cron's mail.
+3. Check the output cron mails you. If your system doesn't deliver
+   cron mail, append `>> ~/charts/acquire.log 2>&1` to the
+   `chartsacquire` command and read that instead. A week with one new
+   Top 40 chart looks like this:
 
    ```
    top100: up to date (61 editions)
@@ -442,19 +448,30 @@ run `chartsacquire` and then `chartsgen` on a schedule.
    top40: acquired 1 edition, 40 entries, 2 new songs
    ```
 
-   A `FAILED` line, or *editions failed*, means a source was down or has
-   changed. The next run retries what is missing. If a chart keeps
-   failing, run `beet -v chartsacquire CHART` to see why.
+A run fetches only what the dataset lacks, so the day doesn't matter:
+a run before a new chart is published picks it up the week after.
 
-While a new Top 2000 is being entered on Wikipedia each December,
-`chartsacquire` skips it with a warning; a run after it's complete
-picks it up.
+`chartsgen` currently rewrites the tag of every track it matches on
+every run, whether or not its chart data changed
+([#150](https://github.com/pvliesdonk/beets-hitlisttag/issues/150)).
+Backup and sync tools see those files as changed each week.
 
-A source may correct an edition it has already published. The plugin
-can't detect that, since a plain run never fetches an edition the file
-already has. When you know of a correction, re-acquire that chart with
-`beet chartsacquire --force CHART`. For `top40`, that fetches every week
-again and takes about an hour.
+**If a chart fails.** A `FAILED` line or *editions failed* usually
+means its source was down or has changed; the line gives the reason
+(with several failed editions, the last one's). The next run retries
+what is missing. If an ingestor itself crashed,
+`beet -v chartsacquire CHART` shows the traceback.
+
+**The Top 2000 in December** is skipped until Wikipedia has the whole
+new edition (see the `top2000` ingestor above).
+
+**A corrected edition.** A source may correct an edition it has already
+published. The plugin can't detect that, since a plain run never
+fetches an edition the file already has. When you know of a correction,
+re-acquire that chart with `beet chartsacquire --force CHART`. For
+`top40` that fetches every week again, about an hour; don't start it
+while the scheduled job may run, since whichever of the two finishes
+last replaces the other's file.
 
 ## Configuration
 
