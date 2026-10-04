@@ -243,6 +243,21 @@ throughout.
    data, against 48 among 5,830 in the Top 100; c044284). The weekly
    view is the rawer one, not a raw one; merged `" / "` names are much
    rarer there (47 against 48).
+   *Refined (2026-10-04):* within the milestone, a one-day spike
+   ([#160](https://github.com/pvliesdonk/beets-hitlisttag/issues/160))
+   on the acquired data comes first, because what the mixed names *are*
+   decides whether splitting and merging can be automatic or need a
+   person, and that decides how much tooling the milestone carries. The
+   catalog
+   ([#161](https://github.com/pvliesdonk/beets-hitlisttag/issues/161))
+   is next because it resolves the durability unknown everything else
+   stands on (see *What curation links are keyed on*). Merge/split,
+   candidate reporting and seeding then run in parallel; tag generation
+   through the catalog
+   ([#165](https://github.com/pvliesdonk/beets-hitlisttag/issues/165))
+   is the clause that lands in the tag, and milestone 9's refinement
+   waits on it (#73 ← #165), since the residue it reports is the
+   evidence milestone 9 is shaped against. `derived`.
 9. **Matching beyond exact** after the ontology: fuzzy and interactive
    matching are only worth their complexity for the residue left after
    normalization plus aliases, and the earlier milestones' unmatched-track
@@ -448,6 +463,36 @@ remain. `derived`.
   title, Nena's "?", normalizes to nothing and gets a new id each time
   it charts
   ([#158](https://github.com/pvliesdonk/beets-hitlisttag/issues/158)).
+  *Ticketed (2026-10-04, milestone 8 refinement):* the counts are in
+  hand but not what they are. Three cases look alike in text and carry
+  three different `stated` policies (double A-side, versions sharing a
+  position, remix folded in), so not knowing changes what gets built:
+  automatic splitting or a candidate report for a person. Research issue
+  [#160](https://github.com/pvliesdonk/beets-hitlisttag/issues/160),
+  one-day appetite (agent proposal of half a day, raised by the owner),
+  blocks the catalog and the candidate report. If the appetite runs out,
+  the mess is worse than the direction assumed; that goes here as a
+  change of direction. `derived`.
+- **What curation links are keyed on.** Curation must survive a full
+  re-acquisition, but the raw song ids it could point at are
+  hitlist-scoped and re-minted when a song's normalized name does not
+  recur on a forced run, or normalizes to nothing at all (`evidenced`:
+  [#158](https://github.com/pvliesdonk/beets-hitlisttag/issues/158),
+  eight ids for one song). Normalized names, the source's own ids and
+  raw ids each fail somewhere. Not knowing changes nothing until the
+  catalog is designed; resolved by: the catalog's brainstorm
+  ([#161](https://github.com/pvliesdonk/beets-hitlisttag/issues/161)),
+  with #158 as its evidence. `derived`.
+- **Seed quality.** The owner's library (`/mnt/music`, tagged by the
+  old tagger project with Top 40 and Top 100 data) is the seed for the
+  catalog. It is not a perfect set — a karaoke version carries the
+  song's chart data in the owner's own example — but the collection is
+  mostly popular songs, most of them in the Top 100s, so a close match is
+  likely a real match. `stated` (2026-10-04). How much of it is wrong,
+  and how many spellings it adds that the datasets lack, is unknown;
+  resolved by: the seeding run
+  ([#164](https://github.com/pvliesdonk/beets-hitlisttag/issues/164)),
+  with a first measure from the spike if its appetite allows. `derived`.
 - **A user-facing fetch cache.** The owner proposed an HTTP cache (e.g.
   `requests-cache`), at least during development (`stated`); that part
   is in [#126](https://github.com/pvliesdonk/beets-hitlisttag/issues/126).
@@ -457,7 +502,11 @@ remain. `derived`.
   sits closer to what the site's terms reserve, the site's
   `max-age=7200` keeps nothing, and it adds a dependency. Resolved by:
   milestone 8's refinement, if the song model needs a re-parse of
-  acquired pages. `derived`.
+  acquired pages. `derived`. *Resolved for milestone 8 (2026-10-04):*
+  no re-parse is needed. The ingestors store names as published,
+  qualifiers included, and the source's title ids per entry, so the
+  curation features work from the dataset alone. The user-facing cache
+  stays an option with no owner; recorded, not ticketed. `derived`.
   A further reason (owner, 2026-10-03, during #123): an edition spanning
   several pages is skipped whole when one page fails, and only a cache
   keeps its other pages for the retry. `stated`.
@@ -817,5 +866,32 @@ remain. `derived`.
   #135–#142 (deferred findings from the ingestor reviews), #144, #145,
   #147, #148 and #158. Next on the graph: refining milestone 8 (#72),
   now unblocked.
+- 2026-10-04 — milestone 8 (song ontology and curation) refined into six
+  work items and one research spike: the data-classification spike
+  (#160), the song catalog and durable curation store (#161), merge and
+  split curation (#162), candidate reporting (#163), seeding from a
+  tagged library (#164), tag generation through the catalog (#165),
+  documentation (#166) and an end-to-end pin of the acceptance criterion
+  (#167). #158 (a name normalizing to nothing re-mints its id) was
+  already in the milestone and is now cited as evidence for the
+  durability unknown. Four decisions from the owner this session: the
+  curation medium is left to the catalog's brainstorm (the #99
+  precedent); the spike's appetite is one day, not the proposed half;
+  the seed is the owner's own tagged library, imperfect but the best
+  there is (recorded under *Seed quality*); and the release that waits
+  on this milestone gets no issue. Coverage against the frozen
+  criterion: *one combined history across spellings and charts* is #161
+  with #165 landing it in the tag; *a multi-song entry credits each
+  song* is #162, found by #163; *hand corrections survive a full
+  re-acquisition* is #161's own deliverable; *a tagged library seeds the
+  catalog* is #164; #167 pins all four. Cross-milestone check: nothing
+  outside the milestone blocks these items beyond the shipped dataset,
+  ingestors and source ids (#75, #118, #125); the open issues outside
+  any milestone (#82, #83, #92, #135–#148) were checked and none
+  touches song identity. The one outgoing edge is #73 ← #165, encoding
+  what the ordering argument for milestone 9 had only argued. Unknowns
+  moved: *Curation scale* is ticketed as #160; *fetch cache* is resolved
+  for this milestone; *what curation links are keyed on* and *seed
+  quality* are new. No change to direction.
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
