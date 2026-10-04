@@ -55,8 +55,9 @@ from that dataset. `stated`.
   file's `CHARTS` tag but absent from config is ignored for per-chart field
   materialization — "not a huge problem". `stated` (2026-07-31). The raw
   data survives in the `charts` blob either way; only the queryable
-  projection is skipped (`evidenced`: the current hardcoded equivalent at
-  `beetsplug/hitlisttag/__init__.py:209-213` logs and skips unknown chart names).
+  projection is skipped (`evidenced`: `HitlistTag.update_item` in
+  `beetsplug/hitlisttag/__init__.py` skips such a chart with a debug note,
+  since #153).
 - The `my_song_id`, `backup_artist`, and `backup_title` fields are **out of
   scope** — they belong to the external `nl.liesdonk.tagger` ecosystem, not
   this plugin. `stated` (2026-07-31). Their removal is tracked as a work item
@@ -164,7 +165,7 @@ from that dataset. `stated`.
 
 ## Milestones and order
 
-Milestones 1–5 (the first roadmap), 6 and 7 are delivered; see
+Milestones 1–5 (the first roadmap), 6, 7 and 10 are delivered; see
 History. Milestones (each holds its acceptance criterion in its GitHub
 description):
 
@@ -236,6 +237,12 @@ throughout.
    The cheaper-first-proof argument
    for the Top 100 no longer decides it; the Top 40's ~3,200 fetches make
    it the bigger build (see *Partial progress*).
+   *Corrected (2026-10-04):* week pages carry `((…))` qualifiers too, not
+   always the same ones as the year lists for the same release
+   (`evidenced`: 113 qualified songs among 15,211 in the acquired weekly
+   data, against 48 among 5,830 in the Top 100; c044284). The weekly
+   view is the rawer one, not a raw one; merged `" / "` names are much
+   rarer there (47 against 48).
 9. **Matching beyond exact** after the ontology: fuzzy and interactive
    matching are only worth their complexity for the residue left after
    normalization plus aliases, and the earlier milestones' unmatched-track
@@ -248,6 +255,11 @@ throughout.
     The missing-report fix
     ([#119](https://github.com/pvliesdonk/beets-hitlisttag/issues/119))
     needs only the milestone 6 dataset and can be taken at any time.
+    *Delivered 2026-10-04,* before milestones 8 and 9 although argued
+    last: the raw-published data milestone 8 waits on had to come first
+    (see 8). Both charts populate and refresh live from top40.nl, and the
+    missing-report uses each edition's declared size (`evidenced`:
+    `tests/test_coverage_acceptance.py`; History).
 
 The order is a lean, not a wall. The standing example — pulling milestone
 8's catalog seeding earlier so milestone 6 had realistic data — lapsed
@@ -371,7 +383,7 @@ remain. `derived`.
   [#116](https://github.com/pvliesdonk/beets-hitlisttag/issues/116)).
 - **Partial progress on many-fetch charts.** `chartsacquire` fetches every
   missing edition before writing and discards the lot on one failed fetch
-  (`evidenced`: `beetsplug/hitlisttag/acquire.py`, `acquire_chart`). That
+  (`evidenced` until #123; superseded, see below). That
   costs nothing for the one-fetch Top 2000 and may stop a chart needing
   hundreds of fetches from ever completing a first population. Keeping
   fetched editions across a failure would revise the all-or-nothing
@@ -389,7 +401,9 @@ remain. `derived`.
   editions after a failed run (`stated`). Carried by
   [#123](https://github.com/pvliesdonk/beets-hitlisttag/issues/123),
   which blocks the Top 40
-  ingestor.
+  ingestor. *Delivered (2026-10-03):* the owner's first full Top 40 run
+  kept 3,194 editions past 10 failed ones, in 53 minutes (`evidenced`:
+  the run's log, `~/hitlisttag-live/top40.log` on the owner's machine).
 - **Ingestor plug-in mechanism.** How a third party's ingestor is found —
   Python entry points, a config-pointed module path, or both — is a
   feature-level decision the user deliberately left to the contract
@@ -419,7 +433,21 @@ remain. `derived`.
   charting version
   rather than the site's merged titles (owner decision, from #116). The
   Top 100 year list is partly pre-merged by the site itself, so its
-  tidiness is evidence about the site's own curation.
+  tidiness is evidence about the site's own curation. *Data in hand
+  (2026-10-04):* #118 has landed and the owner's acquired datasets give
+  the first counts. Resolved by: refining milestone 8
+  ([#72](https://github.com/pvliesdonk/beets-hitlisttag/issues/72))
+  against them.
+
+  | Dataset | Songs | `((…))` | `" / "` | `" ; "` |
+  | --- | --- | --- | --- | --- |
+  | Top 40 weekly | 15,211 | 113 | 47 | 151 |
+  | Top 100 | 5,830 | 48 | 48 | 55 |
+
+  (`evidenced`: the milestone 10 closeout review, 2026-10-04.) One
+  title, Nena's "?", normalizes to nothing and gets a new id each time
+  it charts
+  ([#158](https://github.com/pvliesdonk/beets-hitlisttag/issues/158)).
 - **A user-facing fetch cache.** The owner proposed an HTTP cache (e.g.
   `requests-cache`), at least during development (`stated`); that part
   is in [#126](https://github.com/pvliesdonk/beets-hitlisttag/issues/126).
@@ -439,7 +467,16 @@ remain. `derived`.
   is unchecked. Cheap to answer; resolved by the Top 40 ingestor's
   brainstorm
   ([#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118)).
-  `derived`.
+  `derived`. *Resolved (2026-10-03):* no year index is used. A table of
+  each year's last week (1965–2025, from a one-time probe), ten known
+  New Year gaps where a year starts at week 2, and for a later year its
+  first week's "previous" link (`evidenced`:
+  `beetsplug/hitlisttag/ingestors/top40.py`). Cutting the table at 2024,
+  2015, 2004, 1999 and 1981 still lists all 3,194 weeks, at about one
+  extra request per year past the table (`evidenced`: the closeout
+  review, 2026-10-04). A future gap in the middle of a year would fail
+  every run until the plugin learns it; none in 61 years. Recorded, not
+  ticketed.
 - **Which "Top 100 jaarlijst".** For 1965 the site's web year list
   differs from the printed list it also hosts as an image-only scan:
   different order and some different entries. For 2025 the two agree.
@@ -455,7 +492,22 @@ remain. `derived`.
   the agent may run once the Top 40 ingestor
   ([#118](https://github.com/pvliesdonk/beets-hitlisttag/issues/118))
   has landed.
-  Recorded, not ticketed.
+  Recorded, not ticketed. *Checked (2026-10-04):* summing 41 − position
+  per title id over each year's acquired weeks reproduces the stored
+  year list: on average 99.85 of its 100 titles, never fewer than 99,
+  and 9.85 of the top 10 in place (`evidenced`: the closeout review).
+- **top40.nl's certificate chain.** The site serves an intermediate that
+  doesn't match its leaf, so the plugin embeds the right one
+  (`evidenced`: `beetsplug/hitlisttag/top40nl.py`, valid to 2036). The
+  leaf expires 2026-12-23; if the renewed one comes from another
+  intermediate while the chain stays broken, every user's run fails
+  until a release. Resolved by: the first routine run after the
+  renewal. `derived`.
+- **A provisional current-year Top 100.** If the site ever lists a year
+  before its last weekly chart, a plain run stores that list and never
+  fetches it again (`--force` would). On 2026-10-04 the index went to
+  2025 only (`evidenced`: the closeout's live run). Resolved by: the
+  index in early 2027. `derived`.
 - **Residual miss-rate.** Whether fuzzy matching is needed at meaningful
   scale once exact-normalized lookup plus aliases exist; if the residue is
   tiny, milestone 9 shrinks — a possible change of direction, recorded here
@@ -684,7 +736,8 @@ remain. `derived`.
   #72, since both lists are views of the same data (choosing the Top 100,
   #117, as the edge is the agent's call, `derived`); the partial-progress
   question is recorded as an unknown for the spike, not filed as a
-  feature; #114 moves in; the spike's appetite is one day. Coverage against the frozen criterion:
+  feature; #114 moves in; the spike's appetite is one day. Coverage
+  against the frozen criterion:
   *populated from public sources* is #116–#118; *kept current with
   routine runs* rests on milestone 7's incremental refresh plus #114,
   #120, and whatever the partial-progress unknown turns up; the
@@ -735,5 +788,34 @@ remain. `derived`.
   run the file holds what it held plus everything acquired up to the last
   successful write. `stated` (the decisions); `derived` (the invariants'
   wording).
+- 2026-10-04 — milestone 10 (chart coverage and upkeep) closed against
+  its frozen criterion, clause by clause. *Populated from their public
+  sources with the bundled tool:* the owner's live runs on 2026-10-03
+  acquired the whole Top 40 (3,194 weeks, 1965 to 2026 week 40) and Top
+  100 (61 years); the closeout review found every edition complete
+  (positions exactly 1 to its size), the cached source pages re-parsing
+  to the same data (two songs keep their first-seen spelling), and the
+  Top 100 recomputable from the weekly charts (see *Which "Top 100
+  jaarlijst"*). *Kept current with routine runs:* two live runs with
+  `main` at 9969eb9 against a copy of those datasets, authorized by the
+  owner for the closeout. With nothing new: 3 requests, nothing written.
+  With each chart's newest edition removed first: 5 requests, fetching
+  exactly Top 100 2025 and Top 40 2026 week 40, and both files came out
+  byte-identical to the originals. Offline pin:
+  `tests/test_coverage_acceptance.py` (#121). *Missing-report against
+  each edition's true size:* #119, pinned by the same test and run
+  against the real datasets in the review. Joined during delivery, by
+  the owner's triage: #132, #143, #150, #151 and #153 (with #114 from
+  the refinement). Revised on the way: an ingestor bug now fails only
+  its chart and the run goes on, and Ctrl-C reports what the chart's
+  file kept (#149), where the previous entry had both propagate;
+  `chartsgen` leaves files whose chart data is unchanged alone (#154).
+  Release: none yet, by the owner's decision to wait for milestone 8
+  (`stated`). PyPI's v0.1.0 has neither `chartsacquire`, `chartsgen` nor
+  these ingestors, but merged top40.nl entries won't match tracks until
+  song curation exists. Tracked for later, outside any milestone:
+  #135–#142 (deferred findings from the ingestor reviews), #144, #145,
+  #147, #148 and #158. Next on the graph: refining milestone 8 (#72),
+  now unblocked.
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
