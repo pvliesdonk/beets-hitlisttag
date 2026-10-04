@@ -487,7 +487,8 @@ remain. `derived`.
   or absorbed by the catalog — since either answer feeds the keying
   decision. `derived`.
 - **Seed quality.** The owner's library (`/mnt/music`, already in
-  beets, tagged by the old tagger project) is the seed for the catalog.
+  beets, tagged before this plugin could write those charts — by the
+  old tagger project, `derived`) is the seed for the catalog.
   It may not be a perfect set — a karaoke version carries the song's
   chart data in the owner's own example — but it is the best there is;
   the collection is mostly popular songs, most of them in the Top 100s,
