@@ -136,6 +136,38 @@ def _ranges(values: Sequence[int]) -> str:
     return ", ".join(parts)
 
 
+def _label(axes: Mapping[str, int], axis_names: Sequence[str]) -> str | None:
+    """``1982 week 1`` for ``{"year": 1982, "week": 1}``; None if an axis is missing."""
+    if not all(name in axes for name in axis_names):
+        return None
+    first, *rest = axis_names
+    return " ".join([str(axes[first]), *(f"{name} {axes[name]}" for name in rest)])
+
+
+def _editions(refs: Sequence[EditionRef], axis_names: Sequence[str]) -> str:
+    """The editions as text: ``1965–1967, 1971`` for one axis, ``1982 week 1,
+    2005 weeks 1–3, 7`` for two. A ref lacking an axis is left out (a wrong
+    axis name is one reason an edition fails)."""
+    complete = [
+        ref.axes for ref in refs if all(name in ref.axes for name in axis_names)
+    ]
+    if not complete:
+        return ""
+    if len(axis_names) == 1:
+        return _ranges([axes[axis_names[0]] for axes in complete])
+    if len(axis_names) == 2:
+        first, second = axis_names
+        groups: dict[int, set[int]] = {}
+        for axes in complete:
+            groups.setdefault(axes[first], set()).add(axes[second])
+        parts = []
+        for key in sorted(groups):
+            name = second if len(groups[key]) == 1 else f"{second}s"
+            parts.append(f"{key} {name} {_ranges(sorted(groups[key]))}")
+        return ", ".join(parts)
+    return ", ".join(_label(axes, axis_names) or "" for axes in complete)
+
+
 def _plural(n: int, word: str, plural: str | None = None) -> str:
     return f"{n:,} {word}" if n == 1 else f"{n:,} {plural or word + 's'}"
 
@@ -213,10 +245,10 @@ class ChartResult:
                 f"{_plural(self.new_songs, 'new song')}"
             )
         if self.failed:
-            refs = [ref for ref, _reason in self.failed]
+            named = _editions([ref for ref, _reason in self.failed], axis_names)
             out.append(
                 f"{self.chart}: {_plural(len(self.failed), 'edition')} failed"
-                f"{span(first_axis(refs))}: {self.failed[-1][1]}; "
+                f"{f' ({named})' if named else ''}: {self.failed[-1][1]}; "
                 "a later run retries them"
             )
         if self.stopped:
@@ -442,6 +474,8 @@ def acquire_chart(
                 pending.append(edition)
                 in_a_row = 0
             if reason is not None:
+                label = _label(ref.axes, axis_names) or str(dict(ref.axes))
+                log.warning(_Text(f"{chart}: {label} failed: {reason}"))
                 result.failed.append((ref, reason))
                 in_a_row += 1
                 if in_a_row >= STOP_AFTER_FAILURES:

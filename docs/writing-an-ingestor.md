@@ -319,6 +319,9 @@ How scripts in your folder are loaded:
 | The data breaks a rule (position out of range, empty title, …) | Nothing: the contract classes raise `ValueError` | As above, with `ingestor for kerst broke its contract: …` as the message |
 | A bug in your script | Nothing | `kerst: FAILED — ingestor for kerst raised KeyError: 'rank'; …`, and the traceback with `beet -v chartsacquire` |
 
+Each edition that fails in `fetch()` is also logged as a warning with
+its own message, such as `kerst: 1999 failed: <your message>`.
+
 You can also catch a contract `ValueError` yourself and raise
 `IngestError` with your own message, as the quick-start example does for
 a malformed row. Either way the failure is reported cleanly, and the

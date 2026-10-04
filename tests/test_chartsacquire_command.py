@@ -47,7 +47,8 @@ class Fake:
         raise_on = state.get("raise_on") or {{}}
         if str(year) in raise_on:
             name, _, message = raise_on[str(year)].partition(":")
-            raise getattr(builtins, name)(message or "boom")
+            exc = IngestError if name == "IngestError" else getattr(builtins, name)
+            raise exc(message or "boom")
         pairs = state["editions"][str(year)]
         entries = tuple(
             RawEntry(i + 1, (RawSong(a, t),)) for i, (a, t) in enumerate(pairs)
@@ -79,8 +80,8 @@ class FakeSource:
     ):
         """``raise_on`` maps a year to a builtin exception to raise there.
 
-        The value is the exception's name, optionally followed by
-        ``:message`` (the message defaults to "boom").
+        The value is the exception's name (a builtin, or ``IngestError``),
+        optionally followed by ``:message`` (the message defaults to "boom").
         """
         self.state.write_text(
             json.dumps(
@@ -416,3 +417,21 @@ class TestUnexpectedEnds:
             _run(env, "fake")
         assert "RuntimeError: bad {key}" in caplog.text
         assert "Traceback" in caplog.text
+
+    def test_failed_edition_logged_with_its_reason(self, env, caplog):
+        FakeSource(env.ingestors, "fake").set(
+            {2001: [["A", "x"]], 2002: [["B", "y"]]}, fail_on=2002
+        )
+        with caplog.at_level(logging.WARNING), pytest.raises(ui.UserError):
+            _run(env, "fake")
+        assert "fake: 2002 failed: source broke on 2002" in caplog.text
+
+    def test_failure_reason_with_braces_reaches_the_log(self, env, caplog):
+        # beets' logger runs str.format on every str message it is given.
+        FakeSource(env.ingestors, "fake").set(
+            {2001: [["A", "x"]], 2002: [["B", "y"]]},
+            raise_on={2002: "IngestError:no page {2002}"},
+        )
+        with caplog.at_level(logging.WARNING), pytest.raises(ui.UserError):
+            _run(env, "fake")
+        assert "fake: 2002 failed: no page {2002}" in caplog.text
