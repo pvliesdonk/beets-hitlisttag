@@ -30,11 +30,6 @@ from .lookup import SongLookupIndex
 log = beets_logging.getLogger("beets.hitlisttag")
 
 
-def _listed(positions: list[int]) -> str:
-    """Positions as collapsed ranges for the missing-report, or "none"."""
-    return _collapse_range(positions) or "none"
-
-
 # Shipped hitlist definitions: name -> list of axis names. Used as the
 # default for the `hitlists` config key. A present key replaces these
 # defaults (it does not merge); the resolved definitions at runtime come
@@ -48,6 +43,11 @@ DEFAULT_HITLISTS = {
 }
 
 FIELDS = ["", "score", "highest", "when"]
+
+
+def _listed(positions: list[int]) -> str:
+    """Positions as collapsed ranges for the missing-report, or "none"."""
+    return _collapse_range(positions) or "none"
 
 
 class ChartListType(types.Type[ChartList, None]):
