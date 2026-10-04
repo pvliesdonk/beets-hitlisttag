@@ -472,7 +472,24 @@ remain. `derived`.
   one-day appetite (agent proposal of half a day, raised by the owner),
   blocks the catalog and the candidate report. If the appetite runs out,
   the mess is worse than the direction assumed; that goes here as a
-  change of direction. `derived`.
+  change of direction. `derived`. *Resolved (2026-10-04, in about half
+  an hour of the appetite):* the three policies are told apart by the
+  name's structure, not by reading it. `" ; "` is a double A-side and
+  `" / "` across artists is versions sharing a position; both split
+  mechanically, and only 21 same-artist title variants (re-release,
+  maxi, edit, remix — the same song by policy) need a person. `((…))`
+  is the site's artist disambiguator, not a version marker.
+  Cross-chart spelling is mostly a normalizer gap: 58.7 % of Top 2000
+  songs match top40.nl names today, and three normalizer tweaks plus a
+  qualifier-suffix rule take the songs that charted past 95 %, leaving
+  hand aliases in the hundreds. Within the site, the Top 100 joins the
+  Top 40 by name at 99 % and by title id completely. Verdict and
+  working: [#160](https://github.com/pvliesdonk/beets-hitlisttag/issues/160).
+  Consequence: the curation tooling is a confirm-list for the small
+  residue, not a workbench for thousands; splitting belongs in the
+  automatic path, and the catalog's and candidate report's brainstorms
+  (#161, #163) start from the structural rules. `evidenced` (the
+  spike's counts, 2026-10-04); `derived` (the consequence).
 - **What curation links are keyed on.** Curation must survive a full
   re-acquisition, but the raw song ids it could point at are
   hitlist-scoped and re-minted when a song's normalized name does not
@@ -485,7 +502,14 @@ remain. `derived`.
   with #158 as its evidence. #158 waits on #161 so that the same
   brainstorm decides its disposition — fixed on the acquisition side
   or absorbed by the catalog — since either answer feeds the keying
-  decision. `derived`.
+  decision. `derived`. *Evidence (2026-10-04):* top40.nl's title id is
+  a stable per-chart key for a raw song — no raw song ever carries two
+  ids, and the Top 100's are 1:1 — but it identifies the position's
+  entry, so it bundles cover versions sharing a position and is a
+  "same song" hint only when the artist agrees (`evidenced`:
+  [#160](https://github.com/pvliesdonk/beets-hitlisttag/issues/160)).
+  The Top 2000's source publishes no ids, so a source id cannot be the
+  only key. `derived`.
 - **Seed quality.** The owner's library (`/mnt/music`, already in
   beets, tagged before this plugin could write those charts — by the
   old tagger project, `derived`) is the seed for the catalog.
@@ -500,6 +524,14 @@ remain. `derived`.
   resolved by: the seeding run
   ([#164](https://github.com/pvliesdonk/beets-hitlisttag/issues/164)),
   with a first measure from the spike if its appetite allows. `derived`.
+  *First measure (2026-10-04):* 6,216 of the 6,218 tracks tagged with
+  Top 40 or Top 100 positions resolve by position to an entry in the
+  acquired files; 1,665 spell the song differently from the dataset;
+  3,036 carry a Top 2000 position too, and 636 of those bridge a
+  Wikipedia spelling to a top40.nl entry; at most 1.2 % carry a title
+  unrelated to the entry their positions name (`evidenced`:
+  [#160](https://github.com/pvliesdonk/beets-hitlisttag/issues/160)).
+  The seeding run still decides the rest. `derived`.
 - **Curation medium.** Hand-maintained file(s) in the dataset
   directory, beets commands, or both. The owner left it to the catalog's
   brainstorm
@@ -920,5 +952,17 @@ remain. `derived`.
   review found the first draft under-structured on exactly the last
   two and on #158's disposition; fixed before merge. No change to
   direction.
+- 2026-10-04 — research spike #160 (classify the mess in the acquired
+  data) closed in about half an hour of its one-day appetite. Verdict:
+  the three stated policies are distinguished by a name's structure,
+  so splitting is automatic and the human residue is 21 songs; `((…))`
+  is an artist disambiguator; cross-chart spelling is mostly a
+  normalizer gap (three tweaks and a qualifier rule take the charting
+  Top 2000 songs past 95 %); the site's title id is a stable per-chart
+  key for a raw song; and the owner's library is a good seed (6,216
+  of 6,218 placed, 1,665 new spellings, 636 Wikipedia-to-top40.nl
+  bridges, at most 1.2 % wrong). Consequences recorded under
+  *Curation scale* (resolved), *What curation links are keyed on* and
+  *Seed quality*. No change to direction; #161 and #163 are unblocked.
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
