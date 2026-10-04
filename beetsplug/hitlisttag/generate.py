@@ -64,6 +64,7 @@ class RunReport:
 
     total: int = 0
     generated: int = 0
+    unchanged: int = 0
     unmatched: list[str] = field(default_factory=list)
     ambiguous: list[tuple[str, list[str]]] = field(default_factory=list)
     unnormalizable: list[str] = field(default_factory=list)
@@ -73,6 +74,8 @@ class RunReport:
 
     def lines(self) -> list[str]:
         out = [f"Generated charts for {self.generated} of {self.total} tracks."]
+        if self.unchanged:
+            out.append(f"Already up to date, not rewritten: {self.unchanged}.")
 
         def bucket(header: str, entries: list[str]) -> None:
             if entries:

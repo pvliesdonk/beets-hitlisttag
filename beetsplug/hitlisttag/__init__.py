@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,18 @@ DEFAULT_HITLISTS = {
 }
 
 FIELDS = ["", "score", "highest", "when"]
+
+
+def _same_charts(raw: str, charts: ChartList) -> bool:
+    """True when a file's raw CHARTS tag holds the same data as ``charts``.
+
+    Compared as parsed JSON, so formatting and key order don't count; an
+    unparseable tag is never the same.
+    """
+    try:
+        return json.loads(raw) == json.loads(charts.to_json_string())
+    except ValueError:
+        return False
 
 
 def _listed(positions: list[int]) -> str:
@@ -632,6 +645,13 @@ class HitlistTag(BeetsPlugin):
             for chart, placements in sorted(result.placements.items())
         ]
         item.charts = merge_charts(existing, generated)
+        if raw and _same_charts(raw, item.charts):
+            # The file already holds exactly this: don't rewrite it, but
+            # bring the database up to it, since the database may lag.
+            self.update_item(item)
+            report.generated += 1
+            report.unchanged += 1
+            return
         if not item.try_write():
             report.unwritable.append(display)
             return
