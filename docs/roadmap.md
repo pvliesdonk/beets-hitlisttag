@@ -537,6 +537,9 @@ remain. `derived`.
   brainstorm
   ([#161](https://github.com/pvliesdonk/beets-hitlisttag/issues/161)),
   as the plug-in mechanism was left to #99. `stated` (2026-10-04).
+  *Resolved (2026-10-04, in that brainstorm):* at the beets prompt.
+  Subcommands record each decision; the on-disk catalog is the plugin's
+  file — documented and machine-written, not hand-edited. `stated`.
 - **Where milestone 8 ends and milestone 9 begins.** Milestone 9's
   criterion remembers every resolution so no question is asked twice;
   the catalog's seeded links (#164) and the track-to-song resolution
@@ -964,5 +967,19 @@ remain. `derived`.
   bridges, at most 1.2 % wrong). Consequences recorded under
   *Curation scale* (resolved), *What curation links are keyed on* and
   *Seed quality*. No change to direction; #161 and #163 are unblocked.
+- 2026-10-04 — the catalog's brainstorm (#161) opened and paused after
+  two owner decisions: curation happens at the beets prompt (recorded
+  under *Curation medium*), and the spike's normalizer improvements
+  land first as their own feature
+  ([#170](https://github.com/pvliesdonk/beets-hitlisttag/issues/170)),
+  which now blocks #161. The reason is the one design question #170
+  carries: `normalize` is both the matching key and acquisition's
+  id-reuse key, and a looser matching key must not make acquisition
+  merge what a source publishes as two artists. Decided in #170's
+  brainstorm (`derived`, endorsed by the owner): two keys — a
+  `match_key` for lookup, layered on an unchanged `normalize` that
+  acquisition keeps. Over the owner's three real datasets the looser
+  key creates no ambiguous lookup key (0 before and after). No change
+  to direction.
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464

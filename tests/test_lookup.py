@@ -11,6 +11,7 @@ from beetsplug.hitlisttag.dataset import Edition, Entry, HitlistData, Song
 from beetsplug.hitlisttag.lookup import (
     Placement,
     SongLookupIndex,
+    match_key,
     normalize,
 )
 
@@ -51,6 +52,83 @@ def _data(chart, songs, editions, source="mem"):
 )
 def test_normalize(raw, expected):
     assert normalize(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # top40.nl's disambiguator for same-named artists (#160).
+        ("The Scorpions ((GBR))", "scorpions"),
+        ("Sonny ((Bono))", "sonny"),
+        ("You've Got Your Troubles ((1965))", "you ve got your troubles"),
+        ("InCrowd ((NLD))", "incrowd"),
+        # "&" and "and" are interchangeable across sources.
+        ("Simon & Garfunkel", "simon and garfunkel"),
+        ("Simon and Garfunkel", "simon and garfunkel"),
+        ("Ike & Tina Turner", "ike and tina turner"),
+        # One leading "The" is dropped, unless it is the whole name.
+        ("The Bangles", "bangles"),
+        ("Bangles", "bangles"),
+        ("The Eagles", "eagles"),
+        ("The The", "the"),
+        ("The", "the"),
+        ("Theatre Of Hate", "theatre of hate"),
+        # Everything normalize does still applies.
+        ("Beyoncé", "beyonce"),
+        ("...", ""),
+        ("((GBR))", ""),
+    ],
+)
+def test_match_key(raw, expected):
+    assert match_key(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("stored", "looked_up"),
+    [
+        (
+            ("The Scorpions ((GBR))", "Hello Josephine"),
+            ("Scorpions", "Hello Josephine"),
+        ),
+        (
+            ("Simon & Garfunkel", "Mrs. Robinson"),
+            ("Simon and Garfunkel", "Mrs. Robinson"),
+        ),
+        (("Bangles", "Eternal Flame"), ("The Bangles", "Eternal Flame")),
+        (
+            ("Scorpions", "Wind Of Change"),
+            ("The Scorpions ((GBR))", "Wind of Change"),
+        ),
+    ],
+)
+def test_lookup_matches_across_source_spellings(stored, looked_up):
+    song = Song(id="1", artist=stored[0], title=stored[1])
+    data = _data("top40", [song], [Edition({"year": 1991}, 40, [Entry(1, [song])])])
+    index = SongLookupIndex.from_datasets([data], log)
+
+    result = index.lookup(*looked_up)
+
+    assert result.placements == {"top40": [Placement({"year": 1991}, 1, 40)]}
+    assert not result.ambiguous_charts
+
+
+def test_two_spellings_of_one_song_in_one_chart_are_ambiguous():
+    a = Song(id="1", artist="Simon & Garfunkel", title="Cecilia")
+    b = Song(id="2", artist="Simon and Garfunkel", title="Cecilia")
+    data = _data(
+        "top40",
+        [a, b],
+        [
+            Edition({"year": 1970}, 40, [Entry(1, [a])]),
+            Edition({"year": 1971}, 40, [Entry(1, [b])]),
+        ],
+    )
+    index = SongLookupIndex.from_datasets([data], log)
+
+    result = index.lookup("Simon & Garfunkel", "Cecilia")
+
+    assert result.ambiguous_charts == {"top40"}
+    assert result.placements == {}
 
 
 def test_single_chart_hit_returns_placements():
