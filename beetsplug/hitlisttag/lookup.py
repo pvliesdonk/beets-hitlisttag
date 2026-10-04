@@ -1,7 +1,9 @@
 """Normalized exact song lookup over the chart dataset.
 
-`normalize` is the single caseless-matching normalizer, shared by
-index-building and per-track lookup so both sides agree by construction.
+`match_key` is the single matching key, shared by index-building and
+per-track lookup so both sides agree by construction. It is layered on
+`normalize`, the strict caseless normalizer that acquisition keeps for reusing
+song ids: what a source publishes as two artists stays two there.
 `SongLookupIndex` maps a normalized (artist, title) key to the chart positions
 of the matching song, and reports a key as ambiguous when two distinct song ids
 in one chart collapse onto it.
@@ -58,8 +60,11 @@ def match_key(text: str) -> str:
     unless it is the whole name. Acquisition keeps using ``normalize`` to
     reuse ids, so what a source publishes as two artists stays two.
     """
-    text = normalize(_DISAMBIGUATOR.sub(" ", text).replace("&", " and "))
-    if text.startswith("the ") and len(text) > 4:
+    stripped = _DISAMBIGUATOR.sub(" ", text)
+    if not normalize(stripped):
+        return ""  # a name that is only "&" still normalizes to nothing
+    text = normalize(stripped.replace("&", " and "))
+    if text.startswith("the "):
         return text[4:]
     return text
 

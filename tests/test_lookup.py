@@ -77,6 +77,10 @@ def test_normalize(raw, expected):
         ("Beyoncé", "beyonce"),
         ("...", ""),
         ("((GBR))", ""),
+        # A name that is nothing but "&" still normalizes to nothing.
+        ("&", ""),
+        ("& &", ""),
+        ("((GBR)) &", ""),
     ],
 )
 def test_match_key(raw, expected):
@@ -230,7 +234,8 @@ def test_ambiguous_in_one_chart_hit_in_another():
 
 @pytest.mark.parametrize(
     ("artist", "title"),
-    [("...", "!!!"), ("A", "..."), ("...", "T")],  # both, title-only, artist-only
+    # both, title-only, artist-only, disambiguator-only artist
+    [("...", "!!!"), ("A", "..."), ("...", "T"), ("((GBR))", "T")],
 )
 def test_unnormalizable_track_reports_none(artist, title):
     a = Song(id="1", artist="A", title="T")
@@ -261,6 +266,21 @@ def test_dataset_song_with_empty_key_is_skipped_with_warning(caplog):
     assert index.lookup("a", "t").placements == {
         "top40": [Placement(axes={"year": 2023, "week": 1}, position=1, size=40)]
     }
+
+
+def test_dataset_song_that_is_only_a_disambiguator_is_skipped(caplog):
+    good = Song(id="1", artist="A", title="T")
+    bad = Song(id="2", artist="A", title="((1965))")
+    data = _data(
+        "top40",
+        [good, bad],
+        [Edition({"year": 2023, "week": 1}, 40, [Entry(1, [good]), Entry(2, [bad])])],
+    )
+    with caplog.at_level(logging.WARNING):
+        index = SongLookupIndex.from_datasets([data], log)
+
+    assert "normalizes to an empty key" in caplog.text
+    assert index.lookup("A", "1965").is_miss
 
 
 def test_orphan_song_not_in_any_entry_is_not_indexed():
