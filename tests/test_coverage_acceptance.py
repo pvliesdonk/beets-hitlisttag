@@ -27,9 +27,9 @@ from types import SimpleNamespace
 
 import pytest
 import requests
-from requests.adapters import HTTPAdapter
 from beets import config
 from beets.plugins import find_plugins, load_plugins
+from requests.adapters import HTTPAdapter
 
 from beetsplug.hitlisttag import HitlistTag, top40nl
 from beetsplug.hitlisttag.dataset import read_dataset
