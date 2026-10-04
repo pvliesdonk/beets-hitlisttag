@@ -979,7 +979,10 @@ remain. `derived`.
   brainstorm (`derived`, endorsed by the owner): two keys — a
   `match_key` for lookup, layered on an unchanged `normalize` that
   acquisition keeps. Over the owner's three real datasets the looser
-  key creates no ambiguous lookup key (0 before and after). No change
-  to direction.
+  key creates no ambiguous lookup key (0 before and after) and lifts
+  the Top 2000 songs with an exact top40.nl match from 2,889 to 3,087;
+  the spike's "past 95 %" counted the qualifier-suffix rule too, which
+  stays the catalog's (a version question), so #170 alone delivers the
+  +198. No change to direction.
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
