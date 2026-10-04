@@ -134,6 +134,32 @@ class TestChartsUpdate:
 
         assert "nonexistent" not in item._values_flex
 
+    def test_unconfigured_chart_logged_at_debug_only(self, env, caplog):
+        # #153: a chart outside `hitlists` is supported, not an error.
+        helper, plugin = env
+        item = _add_item(
+            helper,
+            charts=ChartList(
+                [
+                    _make_chart("nonexistent", positions={"2023": 3}),
+                    _make_chart("top2000", positions={"2023": 5}),
+                ]
+            ),
+            artist="Artist D",
+            title="Song D",
+            album="Album D",
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            plugin.update_item(item)
+
+        notes = [r for r in caplog.records if "nonexistent" in r.getMessage()]
+        assert [r.getMessage() for r in notes] == [
+            "nonexistent is not a configured hitlist; its flexible fields are not set"
+        ]
+        assert all(r.levelno == logging.DEBUG for r in notes)
+        assert item["top2000_score"] == 100
+
 
 # ── charts ─────────────────────────────────────────────────────────────────
 
@@ -620,3 +646,17 @@ class TestConfigDrivenHitlists:
         assert resolved == {"good": ["year"]}
         assert "good" in plugin.item_types
         assert "bad" not in plugin.item_types
+
+
+def test_unconfigured_chart_name_with_braces_is_logged_as_is(env, caplog):
+    helper, plugin = env
+    item = _add_item(
+        helper,
+        charts=ChartList([_make_chart("odd{name}", positions={"2023": 3})]),
+        artist="Artist E",
+        title="Song E",
+        album="Album E",
+    )
+    with caplog.at_level(logging.DEBUG):
+        plugin.update_item(item)
+    assert "odd{name} is not a configured hitlist" in caplog.text

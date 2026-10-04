@@ -523,6 +523,7 @@ A chart present in a file's `CHARTS` tag but absent from the configured
 hitlists is still stored in the `charts` blob, but its per-chart
 flexible fields are not materialized — only configured hitlists get
 queryable `name`, `name_score`, `name_highest`, and `name_when` fields.
+`beet -v` notes each such chart; a normal run says nothing about them.
 
 ## Status
 
