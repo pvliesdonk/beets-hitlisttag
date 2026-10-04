@@ -569,4 +569,50 @@ class TestUnchangedNotRewritten:
         assert writes == []
         fresh = helper.lib.get_item(item.id)
         assert fresh.charts.get_chart("top2000").score == 4
+        assert fresh["top2000"] is True
         assert fresh["top2000_score"] == 4
+        assert fresh["top2000_highest"] == "1"  # declared a string field
+
+    def test_second_run_with_a_foreign_chart_in_the_tag_writes_nothing(
+        self, env, monkeypatch
+    ):
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Artist A", title="Song A")
+        _seed_file_charts(item, ChartList([_make_chart("kerst")]))
+        plugin.generate(helper.lib, _opts(), [])
+        assert [c["name"] for c in _file_charts(item)] == ["kerst", "top2000"]
+        writes = self._count_writes(monkeypatch)
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert writes == []
+
+    def _generated_tag(self, env) -> tuple:
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Artist A", title="Song A")
+        plugin.generate(helper.lib, _opts(), [])
+        return item, _file_charts(item)
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [("score", 4.0), ("highest", True)],
+        ids=["float-score-unparseable", "bool-highest"],
+    )
+    def test_equal_by_value_but_not_by_type_is_rewritten(
+        self, env, monkeypatch, key, value
+    ):
+        helper, plugin, dataset_dir = env
+        item, charts = self._generated_tag(env)
+        charts[0][key] = value
+        mf = MediaFile(syspath(item.path))
+        mf.charts = json.dumps(charts)
+        mf.save()
+        writes = self._count_writes(monkeypatch)
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert writes == ["Song A"]
+        assert _file_charts(item)[0][key] == {"score": 4, "highest": 1}[key]
+        assert type(_file_charts(item)[0][key]) is int
