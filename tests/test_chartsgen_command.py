@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 from beets import config, ui
+from beets.library import Item
 from beets.plugins import find_plugins, load_plugins
 from beets.util import syspath
 from mediafile import MediaFile
@@ -479,3 +480,139 @@ class TestRoundTrip:
         out = capsys.readouterr().out
         assert "GenAlbum" in out
         assert "ExtAlbum" in out
+
+
+class TestUnchangedNotRewritten:
+    """#150: a track whose CHARTS data would not change is not rewritten."""
+
+    def _count_writes(self, monkeypatch) -> list[str]:
+        writes: list[str] = []
+        real = Item.try_write
+
+        def counting(self, *args, **kwargs):
+            writes.append(self.title)
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Item, "try_write", counting)
+        return writes
+
+    def test_second_run_writes_nothing(self, env, capsys, monkeypatch):
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Artist A", title="Song A")
+        plugin.generate(helper.lib, _opts(), [])
+        capsys.readouterr()
+        mtime = os.stat(syspath(item.path)).st_mtime_ns
+        writes = self._count_writes(monkeypatch)
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert writes == []
+        assert os.stat(syspath(item.path)).st_mtime_ns == mtime
+        out = capsys.readouterr().out
+        assert "Generated charts for 1 of 1 tracks." in out
+        assert "Already up to date, not rewritten: 1." in out
+
+    def test_changed_dataset_still_writes(self, env, monkeypatch):
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Artist A", title="Song A")
+        plugin.generate(helper.lib, _opts(), [])
+        grown = json.loads(json.dumps(_TOP2000))
+        grown["editions"].append(
+            {
+                "axes": {"year": 2024},
+                "size": 3,
+                "entries": [{"position": 2, "songs": ["1"]}],
+            }
+        )
+        _write_dataset(dataset_dir, "top2000", grown)
+        writes = self._count_writes(monkeypatch)
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert writes == ["Song A"]
+        assert _file_charts(item)[0]["positions"] == {"2022": 1, "2023": 3, "2024": 2}
+
+    def test_same_data_formatted_differently_is_unchanged(self, env, monkeypatch):
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Artist A", title="Song A")
+        plugin.generate(helper.lib, _opts(), [])
+        mf = MediaFile(syspath(item.path))
+        mf.charts = json.dumps(json.loads(mf.charts), indent=2, sort_keys=True)
+        mf.save()
+        writes = self._count_writes(monkeypatch)
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert writes == []
+
+    def test_database_behind_the_file_is_updated_without_a_write(
+        self, env, monkeypatch
+    ):
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Artist A", title="Song A")
+        plugin.generate(helper.lib, _opts(), [])
+        # The file holds the generated tag; make the database forget it.
+        item = helper.lib.get_item(item.id)
+        item.charts = None
+        for field in ("top2000", "top2000_score"):
+            del item[field]
+        item.store()
+        assert helper.lib.get_item(item.id).get("top2000_score") is None
+        writes = self._count_writes(monkeypatch)
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert writes == []
+        fresh = helper.lib.get_item(item.id)
+        assert fresh.charts.get_chart("top2000").score == 4
+        assert fresh["top2000"] is True
+        assert fresh["top2000_score"] == 4
+        assert fresh["top2000_highest"] == "1"  # declared a string field
+
+    def test_second_run_with_a_foreign_chart_in_the_tag_writes_nothing(
+        self, env, monkeypatch
+    ):
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Artist A", title="Song A")
+        _seed_file_charts(item, ChartList([_make_chart("kerst")]))
+        plugin.generate(helper.lib, _opts(), [])
+        assert [c["name"] for c in _file_charts(item)] == ["kerst", "top2000"]
+        writes = self._count_writes(monkeypatch)
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert writes == []
+
+    def _generated_tag(self, env) -> tuple:
+        helper, plugin, dataset_dir = env
+        _write_dataset(dataset_dir, "top2000", _TOP2000)
+        item = _add_file_item(helper, artist="Artist A", title="Song A")
+        plugin.generate(helper.lib, _opts(), [])
+        return item, _file_charts(item)
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [("score", 4.0), ("highest", True)],
+        ids=["float-score-unparseable", "bool-highest"],
+    )
+    def test_equal_by_value_but_not_by_type_is_rewritten(
+        self, env, monkeypatch, key, value
+    ):
+        helper, plugin, dataset_dir = env
+        item, charts = self._generated_tag(env)
+        charts[0][key] = value
+        mf = MediaFile(syspath(item.path))
+        mf.charts = json.dumps(charts)
+        mf.save()
+        writes = self._count_writes(monkeypatch)
+
+        plugin.generate(helper.lib, _opts(), [])
+
+        assert writes == ["Song A"]
+        assert _file_charts(item)[0][key] == {"score": 4, "highest": 1}[key]
+        assert type(_file_charts(item)[0][key]) is int

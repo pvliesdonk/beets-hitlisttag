@@ -114,3 +114,17 @@ class TestRunReport:
         assert "Unreadable files:" in lines
         assert "Files that could not be written:" in lines
         assert "Existing CHARTS tags that did not parse:" in lines
+
+
+class TestRunReportUnchanged:
+    def test_unchanged_count_follows_the_counts_line(self):
+        report = RunReport(total=3, generated=2, unchanged=2)
+        assert report.lines()[:2] == [
+            "Generated charts for 2 of 3 tracks.",
+            "Already up to date, not rewritten: 2.",
+        ]
+
+    def test_no_unchanged_line_when_every_track_was_written(self):
+        assert RunReport(total=1, generated=1, unchanged=0).lines() == [
+            "Generated charts for 1 of 1 tracks."
+        ]

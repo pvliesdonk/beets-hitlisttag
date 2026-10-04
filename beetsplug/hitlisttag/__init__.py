@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,22 @@ DEFAULT_HITLISTS = {
 }
 
 FIELDS = ["", "score", "highest", "when"]
+
+
+def _same_charts(raw: str, charts: ChartList) -> bool:
+    """True when a file's raw CHARTS tag holds the same data as ``charts``.
+
+    Formatting and key order don't count; value types do (``1``, ``1.0`` and
+    ``true`` differ), which plain ``==`` on parsed JSON would not see.
+    """
+
+    def canonical(text: str) -> str:
+        return json.dumps(json.loads(text), sort_keys=True)
+
+    try:
+        return canonical(raw) == canonical(charts.to_json_string())
+    except ValueError:
+        return False
 
 
 def _listed(positions: list[int]) -> str:
@@ -604,9 +621,11 @@ class HitlistTag(BeetsPlugin):
 
         existing = ChartList()
         raw = mediafile.charts
+        parsed = False
         if raw:
             try:
                 existing = ChartList.from_json_string(raw)
+                parsed = True
             except ChartsParseException as err:
                 # Decision: an unparseable tag is treated as absent and, if
                 # generation writes, overwritten wholesale. Always reported.
@@ -632,6 +651,13 @@ class HitlistTag(BeetsPlugin):
             for chart, placements in sorted(result.placements.items())
         ]
         item.charts = merge_charts(existing, generated)
+        if parsed and _same_charts(raw, item.charts):
+            # The file already holds exactly this: don't rewrite it, but
+            # bring the database up to it, since the database may lag.
+            self.update_item(item)
+            report.generated += 1
+            report.unchanged += 1
+            return
         if not item.try_write():
             report.unwritable.append(display)
             return

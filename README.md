@@ -405,14 +405,20 @@ tracks and lists unmatched tracks, ambiguous tracks (where distinct
 dataset songs collapse onto the same normalized artist/title), tracks
 whose metadata normalizes to nothing, unreadable files, files that
 could not be written, and existing `CHARTS` tags that failed to parse.
-A track only counts as generated once its file write succeeded; on a
-write failure neither the file nor the database is touched.
+A track only counts as generated once its file holds the generated
+data; on a write failure neither the file nor the database is touched.
+
+A track whose file already holds exactly the generated chart data isn't
+written again; only its database entry is brought up to date. So a run
+after nothing changed leaves your files alone, and the report adds a
+line such as `Already up to date, not rewritten: 5198.`
 
 Writing goes through beets' normal tag-writing machinery, so — like
 `beet write` — it writes the item's media fields from the library's
 values, and it materializes the same per-chart flexible fields as
 `chartsupdate`, making generated tags indistinguishable downstream from
-externally produced ones.
+externally produced ones. A track that isn't rewritten doesn't get its
+other media fields written either; use `beet write` for that.
 
 ## Keeping the dataset current
 
@@ -450,11 +456,6 @@ week, a Top 100 after each year, a Top 2000 each December.
 
 A run fetches only what the dataset lacks, so the day doesn't matter:
 a run before a new chart is published picks it up the week after.
-
-`chartsgen` currently rewrites the tag of every track it matches on
-every run, whether or not its chart data changed
-([#150](https://github.com/pvliesdonk/beets-hitlisttag/issues/150)).
-Backup and sync tools see those files as changed each week.
 
 **If a chart fails.** A `FAILED` line or *editions failed* usually
 means its source was down or has changed; the line gives the reason
