@@ -29,7 +29,6 @@ from .lookup import SongLookupIndex
 
 log = beets_logging.getLogger("beets.hitlisttag")
 
-
 # Shipped hitlist definitions: name -> list of axis names. Used as the
 # default for the `hitlists` config key. A present key replaces these
 # defaults (it does not merge); the resolved definitions at runtime come
