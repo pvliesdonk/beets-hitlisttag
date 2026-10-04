@@ -298,6 +298,15 @@ anything is fetched, leaving its file as it was, when:
 - the chart's file has fields the [dataset format](#the-chart-dataset)
   doesn't define: remove them, or keep that chart hand-maintained.
 
+A bug in an ingestor (an unexpected Python error) fails only that chart,
+keeping what it acquired: the report names the error,
+`beet -v chartsacquire` shows its traceback, and the other charts still
+run.
+Ctrl-C stops the whole run, after printing what the interrupted chart's
+file kept. If a folder under `dataset_dir` can't be read, nothing is
+fetched at all, since a chart's file might be in it and the command
+would otherwise start a second one.
+
 Each chart gets a report line:
 
 ```
@@ -310,6 +319,7 @@ top100: 2 editions failed (1965, 1971): <reason>; a later run retries them
 top100: stopped after 3 failed editions in a row; 40 editions not attempted
 kerst: FAILED — <reason>; file unchanged
 kerst: FAILED — <reason>; file keeps the editions acquired before it
+top40: interrupted; file keeps the editions acquired before it
 ```
 
 **The `top2000` ingestor** reads the consolidated table on Dutch

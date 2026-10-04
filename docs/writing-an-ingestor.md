@@ -317,12 +317,18 @@ How scripts in your folder are loaded:
 | --- | --- | --- |
 | The source is unreachable, returns an error, or changed its layout | Raise `IngestError` with a message naming the problem | `kerst: FAILED — <your message>; file unchanged` |
 | The data breaks a rule (position out of range, empty title, …) | Nothing: the contract classes raise `ValueError` | `kerst: FAILED — ingestor for kerst broke its contract: …` |
-| A bug in your script | Nothing | A Python traceback |
+| A bug in your script | Nothing | `kerst: FAILED — ingestor for kerst raised KeyError: 'rank'; …`, and the traceback with `beet -v chartsacquire` |
 
 You can also catch a contract `ValueError` yourself and raise
 `IngestError` with your own message, as the quick-start example does for
-a malformed row. Either way the chart fails cleanly. Whatever goes
-wrong, the chart's dataset file stays exactly as it was.
+a malformed row. Either way the chart fails cleanly, and the other charts
+in the run still go ahead.
+
+A failure while listing editions leaves the chart's dataset file exactly
+as it was. A failure while fetching depends on its kind: an
+`IngestError` or contract `ValueError` fails just that edition, and the
+chart carries on with the next one. A bug ends the chart. Either way,
+the editions acquired before it are kept.
 
 ## Contributing an ingestor
 

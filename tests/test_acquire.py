@@ -451,15 +451,17 @@ class TestFinalReviewFixes:
         assert ing.fetched == []
 
     def test_os_error_from_ingestor_is_not_reported_as_write_failure(self, tmp_path):
-        # Important 2: an ingestor's network error propagates (#99 contract).
+        # Important 2: an ingestor's network error is the ingestor's failure,
+        # not a write failure (since #114, it fails the chart).
         class Offline(FakeIngestor):
             def fetch(self, ref):
                 raise ConnectionError("connection refused")
 
         path = tmp_path / "fake.json"
-        with pytest.raises(ConnectionError):
-            acquire_chart(Offline({2001: []}), ["year"], None, path, HITLISTS, log)
-        assert not path.exists()
+        result = acquire_chart(Offline({2001: []}), ["year"], None, path, HITLISTS, log)
+        assert result.error == (
+            "ingestor for fake raised ConnectionError: connection refused"
+        )
         assert list(tmp_path.iterdir()) == []
 
     def test_unknown_fields_in_existing_file_block_the_write(self, tmp_path):
@@ -830,31 +832,36 @@ class TestPartialProgress:
         assert _years(tmp_path) == [2002]
 
     def test_ctrl_c_saves_what_was_acquired(self, tmp_path):
-        plan = {2001: ("A", "x"), 2002: KeyboardInterrupt()}
-        with pytest.raises(KeyboardInterrupt):
-            acquire_chart(
-                Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
-            )
+        plan = {2001: ("A", "x"), 2002: KeyboardInterrupt(), 2003: ("B", "y")}
+        ing = Scripted(plan)
+        result = acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.interrupted is True
+        assert result.error is None
+        assert ing.fetched == [2001, 2002]
         assert _years(tmp_path) == [2001]
 
-    def test_ingestor_bug_saves_then_propagates(self, tmp_path):
-        plan = {2001: ("A", "x"), 2002: RuntimeError("bug")}
-        with pytest.raises(RuntimeError, match="bug"):
-            acquire_chart(
-                Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
-            )
+    def test_ingestor_bug_saves_and_fails_the_chart(self, tmp_path):
+        plan = {2001: ("A", "x"), 2002: RuntimeError("bug"), 2003: ("B", "y")}
+        ing = Scripted(plan)
+        result = acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.error == "ingestor for fake raised RuntimeError: bug"
+        assert ing.fetched == [2001, 2002]
         assert _years(tmp_path) == [2001]
 
     def test_interrupt_before_anything_acquired_writes_nothing(self, tmp_path):
-        with pytest.raises(KeyboardInterrupt):
-            acquire_chart(
-                Scripted({2001: KeyboardInterrupt()}),
-                ["year"],
-                None,
-                tmp_path / "fake.json",
-                HITLISTS,
-                log,
-            )
+        result = acquire_chart(
+            Scripted({2001: KeyboardInterrupt()}),
+            ["year"],
+            None,
+            tmp_path / "fake.json",
+            HITLISTS,
+            log,
+        )
+        assert result.interrupted is True
         assert list(tmp_path.iterdir()) == []
 
     def test_checkpoint_writes_during_the_run(self, tmp_path):
@@ -1059,3 +1066,123 @@ class TestReviewFixes123:
         )
         # t=70 after the failed 2002: the checkpoint writes 2001 before 2003.
         assert seen[2003] == [2001]
+
+
+class _Listing:
+    """An ingestor whose editions() returns or raises what it is given."""
+
+    chart = "fake"
+    axes = ("year",)
+
+    def __init__(self, listing):
+        self.listing = listing
+        self.fetched: list[int] = []
+
+    def editions(self):
+        if isinstance(self.listing, BaseException):
+            raise self.listing
+        return self.listing
+
+    def fetch(self, ref):
+        self.fetched.append(ref.axes["year"])
+        return _acq(ref.axes["year"], ("A", "x"))
+
+
+def _disk_full(monkeypatch):
+    def broken(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(acquire_module, "write_dataset_file", broken)
+
+
+class TestUnexpectedFailures:
+    """#114 items 2 and 4, #132: what a broken ingestor or Ctrl-C leaves."""
+
+    def _run(self, ing, tmp_path, **kwargs):
+        return acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log, **kwargs
+        )
+
+    def test_listing_a_non_ref_is_a_contract_failure(self, tmp_path):
+        ing = _Listing([EditionRef({"year": 2001}), {"year": 2002}])
+        result = self._run(ing, tmp_path)
+        assert result.error == (
+            "ingestor for fake broke its contract: editions() yielded dict, "
+            "not EditionRef"
+        )
+        assert ing.fetched == []
+        assert list(tmp_path.iterdir()) == []
+
+    def test_bug_while_listing_fails_the_chart(self, tmp_path, caplog):
+        ing = _Listing(RuntimeError("listing broke"))
+        with caplog.at_level(logging.DEBUG):
+            result = self._run(ing, tmp_path)
+        assert result.error == "ingestor for fake raised RuntimeError: listing broke"
+        assert "Traceback" in caplog.text
+        assert list(tmp_path.iterdir()) == []
+
+    def test_bug_while_fetching_logs_the_traceback_at_debug(self, tmp_path, caplog):
+        plan = {2001: ("A", "x"), 2002: KeyError("rank")}
+        with caplog.at_level(logging.DEBUG):
+            result = self._run(Scripted(plan), tmp_path)
+        assert result.error == "ingestor for fake raised KeyError: 'rank'"
+        tracebacks = [r for r in caplog.records if "Traceback" in r.getMessage()]
+        assert tracebacks
+        assert all(r.levelno == logging.DEBUG for r in tracebacks)
+
+    def test_bug_without_a_message_names_the_exception(self, tmp_path):
+        result = self._run(Scripted({2001: RuntimeError()}), tmp_path)
+        assert result.error == "ingestor for fake raised RuntimeError"
+
+    def test_bug_report_says_what_the_file_keeps(self, tmp_path):
+        plan = {2001: ("A", "x"), 2002: RuntimeError("bug")}
+        result = self._run(Scripted(plan), tmp_path)
+        assert result.lines(["year"]) == [
+            "fake: acquired 1 edition (2001), 1 entry, 1 new song",
+            "fake: FAILED — ingestor for fake raised RuntimeError: bug; "
+            "file keeps the editions acquired before it",
+        ]
+
+    def test_bug_and_a_failed_save_report_both(self, tmp_path, monkeypatch):
+        _disk_full(monkeypatch)
+        path = tmp_path / "fake.json"
+        plan = {2001: ("A", "x"), 2002: RuntimeError("bug")}
+        result = self._run(Scripted(plan), tmp_path)
+        assert result.error == (
+            "ingestor for fake raised RuntimeError: bug; could not save the "
+            f"editions acquired before it: cannot write {path}: disk full"
+        )
+        assert result.lines(["year"])[-1].endswith("; file unchanged")
+
+    def test_ctrl_c_while_listing_is_an_interrupt(self, tmp_path):
+        result = self._run(_Listing(KeyboardInterrupt()), tmp_path)
+        assert result.interrupted is True
+        assert result.lines(["year"]) == ["fake: interrupted; file unchanged"]
+
+    def test_ctrl_c_report_says_what_the_file_keeps(self, tmp_path):
+        plan = {2001: ("A", "x"), 2002: KeyboardInterrupt()}
+        result = self._run(Scripted(plan), tmp_path)
+        assert result.lines(["year"]) == [
+            "fake: acquired 1 edition (2001), 1 entry, 1 new song",
+            "fake: interrupted; file keeps the editions acquired before it",
+        ]
+
+    def test_ctrl_c_before_anything_acquired_reports_file_unchanged(self, tmp_path):
+        result = self._run(Scripted({2001: KeyboardInterrupt()}), tmp_path)
+        assert result.lines(["year"]) == ["fake: interrupted; file unchanged"]
+
+    def test_ctrl_c_with_a_failed_save_says_so(self, tmp_path, monkeypatch):
+        _disk_full(monkeypatch)
+        path = tmp_path / "fake.json"
+        plan = {2001: ("A", "x"), 2002: KeyboardInterrupt()}
+        result = self._run(Scripted(plan), tmp_path)
+        assert result.lines(["year"]) == [
+            f"fake: interrupted; could not save: cannot write {path}: disk full; "
+            "file unchanged"
+        ]
+
+    def test_other_base_exceptions_still_save_and_propagate(self, tmp_path):
+        plan = {2001: ("A", "x"), 2002: SystemExit(3)}
+        with pytest.raises(SystemExit):
+            self._run(Scripted(plan), tmp_path)
+        assert _years(tmp_path) == [2001]

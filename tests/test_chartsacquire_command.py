@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +16,7 @@ from beetsplug.hitlisttag import HitlistTag
 from beetsplug.hitlisttag.dataset import read_dataset
 
 FAKE_SCRIPT = """
+import builtins
 import json
 from pathlib import Path
 
@@ -41,6 +44,9 @@ class Fake:
             fh.write(f"{{year}}\\n")
         if year == state.get("fail_on"):
             raise IngestError(f"source broke on {{year}}")
+        raise_on = state.get("raise_on") or {{}}
+        if str(year) in raise_on:
+            raise getattr(builtins, raise_on[str(year)])("boom")
         pairs = state["editions"][str(year)]
         entries = tuple(
             RawEntry(i + 1, (RawSong(a, t),)) for i, (a, t) in enumerate(pairs)
@@ -64,12 +70,19 @@ class FakeSource:
         )
         self.set({})
 
-    def set(self, editions: dict[int, list[tuple[str, str]]], fail_on=None):
+    def set(
+        self,
+        editions: dict[int, list[tuple[str, str]]],
+        fail_on=None,
+        raise_on: dict[int, str] | None = None,
+    ):
+        """``raise_on`` maps a year to the name of a builtin exception to raise."""
         self.state.write_text(
             json.dumps(
                 {
                     "editions": {str(y): p for y, p in editions.items()},
                     "fail_on": fail_on,
+                    "raise_on": {str(y): e for y, e in (raise_on or {}).items()},
                 }
             ),
             encoding="utf-8",
@@ -327,3 +340,64 @@ class TestSourceIds:
         _run(env, "fake")
         assert path.read_bytes() == before
         assert path.stat().st_mtime_ns == mtime
+
+
+class TestUnexpectedEnds:
+    """#114 items 1, 3 and 4, #132, through the command."""
+
+    def test_unreadable_subdirectory_stops_before_fetching(self, env, capsys):
+        if os.geteuid() == 0:
+            pytest.skip("root can read any directory")
+        src = FakeSource(env.ingestors, "fake")
+        src.set({2001: [["A", "x"]]})
+        hidden = env.data / "hidden"
+        hidden.mkdir(parents=True)
+        (hidden / "fake.json").write_text(
+            '{"chart": "fake", "songs": {}, "editions": []}\n', encoding="utf-8"
+        )
+        hidden.chmod(0)
+        try:
+            with pytest.raises(ui.UserError, match="cannot read dataset directory"):
+                _run(env, "fake")
+        finally:
+            hidden.chmod(0o755)
+        assert not (env.data / "fake.json").exists()
+        assert src.calls() == []
+
+    def test_first_run_logs_no_unreadable_directory_warning(self, env, caplog):
+        FakeSource(env.ingestors, "fake").set({2001: [["A", "x"]]})
+        assert not env.data.exists()
+        with caplog.at_level(logging.WARNING):
+            _run(env, "fake")
+        assert "cannot read dataset directory" not in caplog.text
+
+    def test_bug_in_one_chart_fails_it_and_the_next_still_runs(self, env, capsys):
+        FakeSource(env.ingestors, "fake").set(
+            {2001: [["A", "x"]], 2002: [["B", "y"]]}, raise_on={2002: "RuntimeError"}
+        )
+        FakeSource(env.ingestors, "other").set({2001: [["C", "z"]]})
+        with pytest.raises(ui.UserError, match="acquisition failed for fake$"):
+            _run(env, "fake", "other")
+        out = capsys.readouterr().out
+        assert (
+            "fake: FAILED — ingestor for fake raised RuntimeError: boom; "
+            "file keeps the editions acquired before it" in out
+        )
+        assert "other: acquired 1 edition" in out
+        assert [e.axes["year"] for e in _dataset(env)["fake"].editions] == [2001]
+
+    def test_ctrl_c_reports_the_chart_then_stops(self, env, capsys):
+        fake = FakeSource(env.ingestors, "fake")
+        fake.set(
+            {2001: [["A", "x"]], 2002: [["B", "y"]]},
+            raise_on={2002: "KeyboardInterrupt"},
+        )
+        other = FakeSource(env.ingestors, "other")
+        other.set({2001: [["C", "z"]]})
+        with pytest.raises(KeyboardInterrupt):
+            _run(env, "fake", "other")
+        out = capsys.readouterr().out
+        assert "fake: acquired 1 edition (2001), 1 entry, 1 new song" in out
+        assert "fake: interrupted; file keeps the editions acquired before it" in out
+        assert other.calls() == []
+        assert not (env.data / "other.json").exists()
