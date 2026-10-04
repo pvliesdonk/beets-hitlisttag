@@ -140,9 +140,24 @@ def _plural(n: int, word: str, plural: str | None = None) -> str:
     return f"{n:,} {word}" if n == 1 else f"{n:,} {plural or word + 's'}"
 
 
+class _Text:
+    """A log message taken as is.
+
+    beets' logger runs ``str.format`` on a ``str`` message, which breaks on
+    the braces a traceback often holds; any other object is just ``str()``-ed,
+    by beets' logger and the standard one alike.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __str__(self) -> str:
+        return self.text
+
+
 def _raised(chart: str, err: Exception, log: logging.Logger) -> str:
     """Report an unexpected exception from an ingestor; its traceback goes to debug."""
-    log.debug(f"{chart}: ingestor raised:\n{traceback.format_exc()}")
+    log.debug(_Text(f"{chart}: ingestor raised:\n{traceback.format_exc()}"))
     message = str(err)
     described = f"{type(err).__name__}: {message}" if message else type(err).__name__
     return f"ingestor for {chart} raised {described}"
@@ -173,6 +188,7 @@ class ChartResult:
     not_attempted: int = 0
     written: bool = False
     interrupted: bool = False
+    unsaved: int = 0
 
     def lines(self, axis_names: Sequence[str]) -> list[str]:
         def span(values: Sequence[int]) -> str:
@@ -209,10 +225,12 @@ class ChartResult:
                 f"in a row; {_plural(self.not_attempted, 'edition')} not attempted"
             )
         kept = (
-            "file keeps the editions acquired before it"
+            "file keeps the editions written before it"
             if self.written
             else "file unchanged"
         )
+        if self.unsaved:
+            kept += f"; {_plural(self.unsaved, 'acquired edition')} not saved"
         if self.interrupted:
             if self.written and self.pruned:
                 out.append(self._pruned_line(span))
@@ -323,17 +341,6 @@ def acquire_chart(
             missing = listed
         else:
             missing = [ref for ref in listed if key(ref.axes) not in held]
-        if not missing and not result.pruned:
-            return result
-        if existing is not None:
-            dropped = unknown_fields(existing.source)
-            if dropped:
-                result.error = (
-                    f"{existing.source} holds fields chartsacquire would drop "
-                    f"({', '.join(dropped)}); remove them, or keep this chart "
-                    "hand-maintained"
-                )
-                return result
     except IngestError as err:
         result.error = str(err)
         return result
@@ -346,6 +353,18 @@ def acquire_chart(
     except Exception as err:
         result.error = _raised(chart, err, log)
         return result
+
+    if not missing and not result.pruned:
+        return result
+    if existing is not None:
+        dropped = unknown_fields(existing.source)
+        if dropped:
+            result.error = (
+                f"{existing.source} holds fields chartsacquire would drop "
+                f"({', '.join(dropped)}); remove them, or keep this chart "
+                "hand-maintained"
+            )
+            return result
 
     state = existing
     pending: list[AcquiredEdition] = []
@@ -390,51 +409,56 @@ def acquire_chart(
         try:
             return write()
         except Exception as err:
-            result.error = f"could not save acquired editions: {err!r}"
+            result.error = f"{type(err).__name__}: {err}"
             return False
 
-    in_a_row = 0
-    for index, ref in enumerate(missing):
-        reason: str | None = None
-        try:
-            edition = acquire_edition(ingestor, ref)
-        except IngestError as err:
-            reason = str(err)
-        except ValueError as err:
-            reason = f"ingestor for {chart} broke its contract: {err}"
-        except KeyboardInterrupt:
-            result.interrupted = True
-            save()
-            return result
-        except Exception as err:
-            raised = _raised(chart, err, log)
-            if save():
-                result.error = raised
-            else:
+    def run() -> None:
+        in_a_row = 0
+        for index, ref in enumerate(missing):
+            reason: str | None = None
+            try:
+                edition = acquire_edition(ingestor, ref)
+            except IngestError as err:
+                reason = str(err)
+            except ValueError as err:
+                reason = f"ingestor for {chart} broke its contract: {err}"
+            except KeyboardInterrupt:
+                result.interrupted = True
+                save()
+                return
+            except Exception as err:
+                raised = _raised(chart, err, log)
                 result.error = (
-                    f"{raised}; could not save the editions acquired before it: "
-                    f"{result.error}"
+                    raised if save() else f"{raised}; could not save: {result.error}"
                 )
-            return result
-        except BaseException:
-            # Anything else that ends the process: keep what was acquired,
-            # then let it through unchanged.
-            if not save():
-                log.error(f"{chart}: {result.error}")
-            raise
-        else:
-            pending.append(edition)
-            in_a_row = 0
-        if reason is not None:
-            result.failed.append((ref, reason))
-            in_a_row += 1
-            if in_a_row >= STOP_AFTER_FAILURES:
-                result.stopped = True
-                result.not_attempted = len(missing) - index - 1
-                break
-        if pending and clock() - last_write >= CHECKPOINT_SECONDS and not write():
-            return result
+                return
+            except BaseException:
+                # Anything else that ends the process: keep what was
+                # acquired, then let it through unchanged.
+                if not save():
+                    log.error(_Text(f"{chart}: {result.error}"))
+                raise
+            else:
+                pending.append(edition)
+                in_a_row = 0
+            if reason is not None:
+                result.failed.append((ref, reason))
+                in_a_row += 1
+                if in_a_row >= STOP_AFTER_FAILURES:
+                    result.stopped = True
+                    result.not_attempted = len(missing) - index - 1
+                    break
+            if pending and clock() - last_write >= CHECKPOINT_SECONDS:
+                if not write():
+                    return
+        if pending or (result.pruned and not result.written):
+            write()
 
-    if pending or (result.pruned and not result.written):
-        write()
+    try:
+        run()
+    except KeyboardInterrupt:
+        # Ctrl-C during a write, or a second one during the save after the
+        # first: the write is atomic, so the file is as of the last one done.
+        result.interrupted = True
+    result.unsaved = len(pending)
     return result

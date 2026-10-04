@@ -392,7 +392,7 @@ class TestChartResultLines:
         assert r.lines(["year"]) == [
             "x: acquired 1 edition (2001), 1 entry, 1 new song",
             "x: FAILED — cannot write f: disk full; file keeps the editions "
-            "acquired before it",
+            "written before it",
         ]
 
     def test_final_write_failure_says_file_unchanged(self, tmp_path, monkeypatch):
@@ -405,7 +405,8 @@ class TestChartResultLines:
         result = acquire_chart(ing, ["year"], None, path, HITLISTS, log)
         assert result.lines(["year"]) == [
             "fake: 1 edition failed (2002): boom; a later run retries them",
-            f"fake: FAILED — cannot write {path}: disk full; file unchanged",
+            f"fake: FAILED — cannot write {path}: disk full; file unchanged; "
+            "1 acquired edition not saved",
         ]
 
     def test_prune_with_all_fetches_failing_reports_both(self, tmp_path):
@@ -1140,7 +1141,7 @@ class TestUnexpectedFailures:
         assert result.lines(["year"]) == [
             "fake: acquired 1 edition (2001), 1 entry, 1 new song",
             "fake: FAILED — ingestor for fake raised RuntimeError: bug; "
-            "file keeps the editions acquired before it",
+            "file keeps the editions written before it",
         ]
 
     def test_bug_and_a_failed_save_report_both(self, tmp_path, monkeypatch):
@@ -1149,10 +1150,12 @@ class TestUnexpectedFailures:
         plan = {2001: ("A", "x"), 2002: RuntimeError("bug")}
         result = self._run(Scripted(plan), tmp_path)
         assert result.error == (
-            "ingestor for fake raised RuntimeError: bug; could not save the "
-            f"editions acquired before it: cannot write {path}: disk full"
+            "ingestor for fake raised RuntimeError: bug; could not save: "
+            f"cannot write {path}: disk full"
         )
-        assert result.lines(["year"])[-1].endswith("; file unchanged")
+        assert result.lines(["year"])[-1].endswith(
+            "; file unchanged; 1 acquired edition not saved"
+        )
 
     def test_ctrl_c_while_listing_is_an_interrupt(self, tmp_path):
         result = self._run(_Listing(KeyboardInterrupt()), tmp_path)
@@ -1164,7 +1167,7 @@ class TestUnexpectedFailures:
         result = self._run(Scripted(plan), tmp_path)
         assert result.lines(["year"]) == [
             "fake: acquired 1 edition (2001), 1 entry, 1 new song",
-            "fake: interrupted; file keeps the editions acquired before it",
+            "fake: interrupted; file keeps the editions written before it",
         ]
 
     def test_ctrl_c_before_anything_acquired_reports_file_unchanged(self, tmp_path):
@@ -1178,11 +1181,183 @@ class TestUnexpectedFailures:
         result = self._run(Scripted(plan), tmp_path)
         assert result.lines(["year"]) == [
             f"fake: interrupted; could not save: cannot write {path}: disk full; "
-            "file unchanged"
+            "file unchanged; 1 acquired edition not saved"
         ]
 
     def test_other_base_exceptions_still_save_and_propagate(self, tmp_path):
         plan = {2001: ("A", "x"), 2002: SystemExit(3)}
         with pytest.raises(SystemExit):
             self._run(Scripted(plan), tmp_path)
+        assert _years(tmp_path) == [2001]
+
+
+def _writes(monkeypatch, *outcomes):
+    """Replace the dataset writer: each call takes the next outcome.
+
+    ``None`` writes for real; an exception instance is raised instead.
+    """
+    real_write = acquire_module.write_dataset_file
+    queue = list(outcomes)
+
+    def write(*args, **kwargs):
+        outcome = queue.pop(0) if queue else None
+        if outcome is not None:
+            raise outcome
+        return real_write(*args, **kwargs)
+
+    monkeypatch.setattr(acquire_module, "write_dataset_file", write)
+
+
+class TestReviewFixes114:
+    """Findings from the whole-branch review of #114/#132."""
+
+    def _after_checkpoint(self, tmp_path, last, **kwargs):
+        """2001 is saved by a checkpoint, 2002 is pending, 2003 is ``last``."""
+        clock = FakeClock()
+
+        def on_fetch(year):
+            if year == 2001:
+                clock.now += 60
+
+        ing = Scripted({2001: ("A", "x"), 2002: ("B", "y"), 2003: last}, on_fetch)
+        return acquire_chart(
+            ing,
+            ["year"],
+            None,
+            tmp_path / "fake.json",
+            HITLISTS,
+            log,
+            clock=clock,
+            **kwargs,
+        )
+
+    def test_bug_after_a_checkpoint_with_a_failed_save(self, tmp_path, monkeypatch):
+        _writes(monkeypatch, None, OSError("disk full"))
+        path = tmp_path / "fake.json"
+        result = self._after_checkpoint(tmp_path, RuntimeError("bug"))
+        assert result.lines(["year"]) == [
+            "fake: acquired 1 edition (2001), 1 entry, 1 new song",
+            "fake: FAILED — ingestor for fake raised RuntimeError: bug; could not "
+            f"save: cannot write {path}: disk full; file keeps the editions "
+            "written before it; 1 acquired edition not saved",
+        ]
+        assert _years(tmp_path) == [2001]
+
+    def test_ctrl_c_after_a_checkpoint_with_a_failed_save(self, tmp_path, monkeypatch):
+        _writes(monkeypatch, None, OSError("disk full"))
+        path = tmp_path / "fake.json"
+        result = self._after_checkpoint(tmp_path, KeyboardInterrupt())
+        assert result.lines(["year"]) == [
+            "fake: acquired 1 edition (2001), 1 entry, 1 new song",
+            f"fake: interrupted; could not save: cannot write {path}: disk full; "
+            "file keeps the editions written before it; 1 acquired edition "
+            "not saved",
+        ]
+
+    def test_ctrl_c_during_a_checkpoint_write_is_reported(self, tmp_path, monkeypatch):
+        _writes(monkeypatch, KeyboardInterrupt())
+        clock = FakeClock()
+
+        def tick(year):
+            clock.now += 60
+
+        ing = Scripted({2001: ("A", "x"), 2002: ("B", "y")}, on_fetch=tick)
+        result = acquire_chart(
+            ing, ["year"], None, tmp_path / "fake.json", HITLISTS, log, clock=clock
+        )
+        assert result.interrupted is True
+        assert ing.fetched == [2001]
+        assert result.lines(["year"]) == [
+            "fake: interrupted; file unchanged; 1 acquired edition not saved"
+        ]
+        assert list(tmp_path.iterdir()) == []
+
+    def test_second_ctrl_c_during_the_save_is_reported(self, tmp_path, monkeypatch):
+        _writes(monkeypatch, KeyboardInterrupt())
+        plan = {2001: ("A", "x"), 2002: KeyboardInterrupt()}
+        result = acquire_chart(
+            Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.lines(["year"]) == [
+            "fake: interrupted; file unchanged; 1 acquired edition not saved"
+        ]
+
+    def test_unexpected_save_error_is_named_once(self, tmp_path, monkeypatch):
+        _writes(monkeypatch, RuntimeError("encoder broke"))
+        plan = {2001: ("A", "x"), 2002: KeyError("rank")}
+        result = acquire_chart(
+            Scripted(plan), ["year"], None, tmp_path / "fake.json", HITLISTS, log
+        )
+        assert result.error == (
+            "ingestor for fake raised KeyError: 'rank'; could not save: "
+            "RuntimeError: encoder broke"
+        )
+
+    def test_failed_checkpoint_reports_the_unsaved_edition(self, tmp_path, monkeypatch):
+        _writes(monkeypatch, None, OSError("disk full"))
+        clock = FakeClock()
+
+        def tick(year):
+            clock.now += 60
+
+        path = tmp_path / "fake.json"
+        ing = Scripted({2001: ("A", "x"), 2002: ("B", "y"), 2003: ("C", "z")}, tick)
+        result = acquire_chart(ing, ["year"], None, path, HITLISTS, log, clock=clock)
+        assert result.lines(["year"])[-1] == (
+            f"fake: FAILED — cannot write {path}: disk full; file keeps the "
+            "editions written before it; 1 acquired edition not saved"
+        )
+
+    def test_dataset_file_errors_are_not_blamed_on_the_ingestor(
+        self, tmp_path, monkeypatch
+    ):
+        path = tmp_path / "fake.json"
+        acquire_chart(Scripted({2001: ("A", "x")}), ["year"], None, path, HITLISTS, log)
+
+        def vanished(source):
+            raise FileNotFoundError(f"no such file: {source}")
+
+        monkeypatch.setattr(acquire_module, "unknown_fields", vanished)
+        with pytest.raises(FileNotFoundError):
+            acquire_chart(
+                Scripted({2001: ("A", "x"), 2002: ("B", "y")}),
+                ["year"],
+                _read(tmp_path),
+                path,
+                HITLISTS,
+                log,
+            )
+
+    def test_interrupt_report_keeps_the_prune_that_reached_the_file(self, tmp_path):
+        path = tmp_path / "fake.json"
+        acquire_chart(
+            Scripted({1990: ("Z", "q"), 2001: ("A", "x")}),
+            ["year"],
+            None,
+            path,
+            HITLISTS,
+            log,
+        )
+        clock = FakeClock()
+
+        def tick(year):
+            clock.now += 60
+
+        ing = Scripted({2001: ("A", "x"), 2002: KeyboardInterrupt()}, on_fetch=tick)
+        result = acquire_chart(
+            ing,
+            ["year"],
+            _read(tmp_path),
+            path,
+            HITLISTS,
+            log,
+            force=True,
+            prune=True,
+            clock=clock,
+        )
+        assert result.lines(["year"]) == [
+            "fake: re-acquired 1 edition (2001), 1 entry, 0 new songs",
+            "fake: dropped 1 edition not listed by the source (1990)",
+            "fake: interrupted; file keeps the editions written before it",
+        ]
         assert _years(tmp_path) == [2001]

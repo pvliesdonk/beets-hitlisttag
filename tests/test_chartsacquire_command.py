@@ -46,7 +46,8 @@ class Fake:
             raise IngestError(f"source broke on {{year}}")
         raise_on = state.get("raise_on") or {{}}
         if str(year) in raise_on:
-            raise getattr(builtins, raise_on[str(year)])("boom")
+            name, _, message = raise_on[str(year)].partition(":")
+            raise getattr(builtins, name)(message or "boom")
         pairs = state["editions"][str(year)]
         entries = tuple(
             RawEntry(i + 1, (RawSong(a, t),)) for i, (a, t) in enumerate(pairs)
@@ -76,7 +77,11 @@ class FakeSource:
         fail_on=None,
         raise_on: dict[int, str] | None = None,
     ):
-        """``raise_on`` maps a year to the name of a builtin exception to raise."""
+        """``raise_on`` maps a year to a builtin exception to raise there.
+
+        The value is the exception's name, optionally followed by
+        ``:message`` (the message defaults to "boom").
+        """
         self.state.write_text(
             json.dumps(
                 {
@@ -381,7 +386,7 @@ class TestUnexpectedEnds:
         out = capsys.readouterr().out
         assert (
             "fake: FAILED — ingestor for fake raised RuntimeError: boom; "
-            "file keeps the editions acquired before it" in out
+            "file keeps the editions written before it" in out
         )
         assert "other: acquired 1 edition" in out
         assert [e.axes["year"] for e in _dataset(env)["fake"].editions] == [2001]
@@ -398,6 +403,16 @@ class TestUnexpectedEnds:
             _run(env, "fake", "other")
         out = capsys.readouterr().out
         assert "fake: acquired 1 edition (2001), 1 entry, 1 new song" in out
-        assert "fake: interrupted; file keeps the editions acquired before it" in out
+        assert "fake: interrupted; file keeps the editions written before it" in out
         assert other.calls() == []
         assert not (env.data / "other.json").exists()
+
+    def test_traceback_with_braces_reaches_the_debug_log(self, env, caplog):
+        # beets' logger runs str.format on every message it is given.
+        FakeSource(env.ingestors, "fake").set(
+            {2001: [["A", "x"]]}, raise_on={2001: "RuntimeError:bad {key}"}
+        )
+        with caplog.at_level(logging.DEBUG), pytest.raises(ui.UserError):
+            _run(env, "fake")
+        assert "RuntimeError: bad {key}" in caplog.text
+        assert "Traceback" in caplog.text

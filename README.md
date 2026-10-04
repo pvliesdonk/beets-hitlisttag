@@ -318,9 +318,14 @@ top2000: dropped 2 editions not listed by the source (1990–1991)
 top100: 2 editions failed (1965, 1971): <reason>; a later run retries them
 top100: stopped after 3 failed editions in a row; 40 editions not attempted
 kerst: FAILED — <reason>; file unchanged
-kerst: FAILED — <reason>; file keeps the editions acquired before it
-top40: interrupted; file keeps the editions acquired before it
+kerst: FAILED — <reason>; file keeps the editions written before it
+top40: interrupted; file keeps the editions written before it
 ```
+
+The *acquired* line counts only editions that reached the file. When a
+failure or Ctrl-C comes before the latest ones were written, the last
+line ends with how many were lost, e.g. `; 3 acquired editions not
+saved`; a later run fetches them again.
 
 **The `top2000` ingestor** reads the consolidated table on Dutch
 Wikipedia, *Lijst van Radio 2-Top 2000's*: every edition since 1999, in

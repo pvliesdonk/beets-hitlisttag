@@ -23,7 +23,8 @@ JSON file per hitlist. Each file declares:
 
 Files hold raw acquired data only: disposable and re-acquirable. Discovery is
 recursive; only lowercase ``*.json`` files are read; unreadable directories are
-warned about, and symlinked directories are not followed.
+warned about (or, with ``strict``, an error), and symlinked directories are not
+followed.
 """
 
 from __future__ import annotations
@@ -135,9 +136,12 @@ def read_dataset(
 
 def _iter_json_files(root: Path, log: logging.Logger, strict: bool = False):
     def onerror(err: OSError) -> None:
-        message = f"cannot read dataset directory {err.filename!r}: {err}"
+        message = f"cannot read dataset directory {err.filename!r}: {err.strerror}"
         if strict:
-            raise DatasetError(message) from err
+            raise DatasetError(
+                f"{message}; a chart's file may be in it, so make it readable "
+                "or move it out of the dataset directory"
+            ) from err
         log.warning(message)
 
     for dirpath, _dirnames, filenames in os.walk(root, onerror=onerror):
