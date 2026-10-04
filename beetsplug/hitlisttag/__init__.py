@@ -516,7 +516,7 @@ class HitlistTag(BeetsPlugin):
             raise ui.UserError(f"hitlisttag: {err}") from err
         try:
             datasets = (
-                read_dataset(dataset_dir, hitlists, self._log)
+                read_dataset(dataset_dir, hitlists, self._log, strict=True)
                 if dataset_dir.exists()
                 else []
             )
@@ -563,6 +563,9 @@ class HitlistTag(BeetsPlugin):
             )
             for line in result.lines(hitlists[chart]):
                 ui.print_(line)
+            if result.interrupted:
+                # Ctrl-C: the chart's report is out; stop as beets does.
+                raise KeyboardInterrupt
             if result.error is not None or result.failed:
                 failed.append(chart)
         if failed:

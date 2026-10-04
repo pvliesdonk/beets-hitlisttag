@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -139,6 +140,29 @@ def _plural(n: int, word: str, plural: str | None = None) -> str:
     return f"{n:,} {word}" if n == 1 else f"{n:,} {plural or word + 's'}"
 
 
+class _Text:
+    """A log message taken as is.
+
+    beets' logger runs ``str.format`` on a ``str`` message, which breaks on
+    the braces a traceback often holds; any other object is just ``str()``-ed,
+    by beets' logger and the standard one alike.
+    """
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def __str__(self) -> str:
+        return self.text
+
+
+def _raised(chart: str, err: Exception, log: logging.Logger) -> str:
+    """Report an unexpected exception from an ingestor; its traceback goes to debug."""
+    log.debug(_Text(f"{chart}: ingestor raised:\n{traceback.format_exc()}"))
+    message = str(err)
+    described = f"{type(err).__name__}: {message}" if message else type(err).__name__
+    return f"ingestor for {chart} raised {described}"
+
+
 CHECKPOINT_SECONDS = 60
 """Seconds of fetching after which acquired editions are written."""
 
@@ -163,6 +187,8 @@ class ChartResult:
     stopped: bool = False
     not_attempted: int = 0
     written: bool = False
+    interrupted: bool = False
+    unsaved: int = 0
 
     def lines(self, axis_names: Sequence[str]) -> list[str]:
         def span(values: Sequence[int]) -> str:
@@ -198,14 +224,22 @@ class ChartResult:
                 f"{self.chart}: stopped after {STOP_AFTER_FAILURES} failed editions "
                 f"in a row; {_plural(self.not_attempted, 'edition')} not attempted"
             )
+        kept = (
+            "file keeps the editions written before it"
+            if self.written
+            else "file unchanged"
+        )
+        if self.unsaved:
+            kept += f"; {_plural(self.unsaved, 'acquired edition')} not saved"
+        if self.interrupted:
+            if self.written and self.pruned:
+                out.append(self._pruned_line(span))
+            save = f"could not save: {self.error}; " if self.error is not None else ""
+            out.append(f"{self.chart}: interrupted; {save}{kept}")
+            return out
         if self.error is not None:
             if self.written and self.pruned:
                 out.append(self._pruned_line(span))
-            kept = (
-                "file keeps the editions acquired before it"
-                if self.written
-                else "file unchanged"
-            )
             out.append(f"{self.chart}: FAILED — {self.error}; {kept}")
             return out
         if not out and not self.pruned:
@@ -244,11 +278,14 @@ def acquire_chart(
     same-axes editions; with ``prune`` (meaningful only with ``force``),
     editions the source no longer lists are dropped. An edition that fails
     is recorded in ``failed`` and skipped; after ``STOP_AFTER_FAILURES`` in a
-    row the run stops. Acquired editions are written atomically every
-    ``CHECKPOINT_SECONDS`` (by ``clock``), at the end, and before an
-    unexpected exception from the ingestor (Ctrl-C, a bug) propagates; a
-    failed write ends the run. Whatever ends it, the file holds what it held
-    plus every edition acquired up to the last successful write.
+    row the run stops. An unexpected exception from the ingestor (a bug)
+    fails the chart, with its traceback logged at debug level; Ctrl-C sets
+    ``interrupted`` and returns, so the caller can report before stopping.
+    Acquired editions are written atomically every ``CHECKPOINT_SECONDS``
+    (by ``clock``), at the end, and before either of those returns, or any
+    other exception propagates; a failed write ends the run. Whatever ends
+    it, the file holds what it held plus every edition acquired up to the
+    last successful write.
     """
     chart = ingestor.chart
     result = ChartResult(chart, forced=force)
@@ -276,12 +313,17 @@ def acquire_chart(
     result.held = len(held)
 
     # Listing phase: a failure here ends the chart before anything is
-    # fetched or written. Only the contract's own failures are reported;
-    # any other exception from the ingestor propagates (#99).
+    # fetched or written.
     try:
         listed: list[EditionRef] = []
         seen: set[EditionRef] = set()
         for ref in ingestor.editions():
+            if not isinstance(ref, EditionRef):
+                result.error = (
+                    f"ingestor for {chart} broke its contract: editions() "
+                    f"yielded {type(ref).__name__}, not EditionRef"
+                )
+                return result
             if ref not in seen:
                 seen.add(ref)
                 listed.append(ref)
@@ -299,23 +341,30 @@ def acquire_chart(
             missing = listed
         else:
             missing = [ref for ref in listed if key(ref.axes) not in held]
-        if not missing and not result.pruned:
-            return result
-        if existing is not None:
-            dropped = unknown_fields(existing.source)
-            if dropped:
-                result.error = (
-                    f"{existing.source} holds fields chartsacquire would drop "
-                    f"({', '.join(dropped)}); remove them, or keep this chart "
-                    "hand-maintained"
-                )
-                return result
     except IngestError as err:
         result.error = str(err)
         return result
     except ValueError as err:
         result.error = f"ingestor for {chart} broke its contract: {err}"
         return result
+    except KeyboardInterrupt:
+        result.interrupted = True
+        return result
+    except Exception as err:
+        result.error = _raised(chart, err, log)
+        return result
+
+    if not missing and not result.pruned:
+        return result
+    if existing is not None:
+        dropped = unknown_fields(existing.source)
+        if dropped:
+            result.error = (
+                f"{existing.source} holds fields chartsacquire would drop "
+                f"({', '.join(dropped)}); remove them, or keep this chart "
+                "hand-maintained"
+            )
+            return result
 
     state = existing
     pending: list[AcquiredEdition] = []
@@ -353,38 +402,67 @@ def acquire_chart(
         last_write = clock()
         return True
 
-    in_a_row = 0
-    for index, ref in enumerate(missing):
-        reason: str | None = None
+    def save() -> bool:
+        """Write any ``pending`` editions; False, with ``error`` set, on failure."""
+        if not pending:
+            return True
         try:
-            edition = acquire_edition(ingestor, ref)
-        except IngestError as err:
-            reason = str(err)
-        except ValueError as err:
-            reason = f"ingestor for {chart} broke its contract: {err}"
-        except BaseException:
-            # Ctrl-C, or a bug in the ingestor: keep what was acquired, then
-            # let the exception through unchanged.
-            if pending:
-                try:
-                    if not write():
-                        log.error(f"{chart}: {result.error}")
-                except Exception as err:
-                    log.error(f"{chart}: could not save acquired editions: {err!r}")
-            raise
-        else:
-            pending.append(edition)
-            in_a_row = 0
-        if reason is not None:
-            result.failed.append((ref, reason))
-            in_a_row += 1
-            if in_a_row >= STOP_AFTER_FAILURES:
-                result.stopped = True
-                result.not_attempted = len(missing) - index - 1
-                break
-        if pending and clock() - last_write >= CHECKPOINT_SECONDS and not write():
-            return result
+            return write()
+        except Exception as err:
+            result.error = f"{type(err).__name__}: {err}"
+            return False
 
-    if pending or (result.pruned and not result.written):
-        write()
+    def run() -> None:
+        in_a_row = 0
+        for index, ref in enumerate(missing):
+            reason: str | None = None
+            try:
+                edition = acquire_edition(ingestor, ref)
+            except IngestError as err:
+                reason = str(err)
+            except ValueError as err:
+                reason = f"ingestor for {chart} broke its contract: {err}"
+            except KeyboardInterrupt:
+                result.interrupted = True
+                save()
+                return
+            except Exception as err:
+                raised = _raised(chart, err, log)
+                result.error = (
+                    raised if save() else f"{raised}; could not save: {result.error}"
+                )
+                return
+            except BaseException:
+                # Anything else that ends the process: keep what was
+                # acquired, then let it through unchanged.
+                if not save():
+                    log.error(_Text(f"{chart}: {result.error}"))
+                raise
+            else:
+                pending.append(edition)
+                in_a_row = 0
+            if reason is not None:
+                result.failed.append((ref, reason))
+                in_a_row += 1
+                if in_a_row >= STOP_AFTER_FAILURES:
+                    result.stopped = True
+                    result.not_attempted = len(missing) - index - 1
+                    break
+            if pending and clock() - last_write >= CHECKPOINT_SECONDS:
+                if not write():
+                    return
+        if pending or (result.pruned and not result.written):
+            write()
+
+    try:
+        run()
+    except KeyboardInterrupt:
+        # Ctrl-C during a write, or a second one during the save after the
+        # first: the write is atomic, so the file is as of the last one done.
+        # A Ctrl-C landing between a write's replace and its bookkeeping in
+        # write() would count those editions as not saved; that window is a
+        # few statements, and the error is on the safe side (a later run
+        # finds them in the file and does not fetch them again).
+        result.interrupted = True
+    result.unsaved = len(pending)
     return result

@@ -429,3 +429,40 @@ def test_bad_source_ids_rejected(tmp_path, bad):
     obj["editions"][0]["entries"][0]["source_ids"] = bad
     with pytest.raises(DatasetError, match=r"top40\.json.*position 1.*source_ids"):
         _write(tmp_path, obj)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read any directory")
+@pytest.mark.parametrize("which", ["subdirectory", "root"])
+def test_strict_read_refuses_an_unreadable_directory(tmp_path, which):
+    root = tmp_path / "data"
+    hidden = root / "hidden" if which == "subdirectory" else root
+    hidden.mkdir(parents=True)
+    hidden.chmod(0)
+    try:
+        with pytest.raises(DatasetError) as caught:
+            read_dataset(
+                root, {"top2000": ["year"]}, logging.getLogger("t"), strict=True
+            )
+    finally:
+        hidden.chmod(0o755)
+    message = str(caught.value)
+    assert f"cannot read dataset directory {str(hidden)!r}" in message
+    assert message.count(str(hidden)) == 1
+    assert "move it out" in message
+
+
+def test_unreadable_directory_message_without_strerror(tmp_path, monkeypatch, caplog):
+    # An OSError need not carry a filename or strerror; never print "None".
+    from beetsplug.hitlisttag import dataset as dataset_module
+
+    def walk(root, onerror):
+        onerror(OSError("scan failed"))
+        return iter(())
+
+    monkeypatch.setattr(dataset_module.os, "walk", walk)
+    with caplog.at_level(logging.WARNING):
+        read_dataset(tmp_path, {"top2000": ["year"]}, logging.getLogger("t"))
+    assert f"cannot read dataset directory {str(tmp_path)!r}: scan failed" in (
+        caplog.text
+    )
+    assert "None" not in caplog.text

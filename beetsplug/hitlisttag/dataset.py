@@ -23,7 +23,8 @@ JSON file per hitlist. Each file declares:
 
 Files hold raw acquired data only: disposable and re-acquirable. Discovery is
 recursive; only lowercase ``*.json`` files are read; unreadable directories are
-warned about, and symlinked directories are not followed.
+warned about (or, with ``strict``, an error), and symlinked directories are not
+followed.
 """
 
 from __future__ import annotations
@@ -102,19 +103,24 @@ def _is_int(value: object) -> TypeGuard[int]:
 
 
 def read_dataset(
-    root: Path | str, hitlists: Mapping[str, list[str]], log: logging.Logger
+    root: Path | str,
+    hitlists: Mapping[str, list[str]],
+    log: logging.Logger,
+    strict: bool = False,
 ) -> list[HitlistData]:
     """Read every edition file under ``root``.
 
     Returns one ``HitlistData`` per file whose ``chart`` is a configured
     hitlist. Files for unconfigured charts are skipped with a warning. Raises
     ``DatasetError`` (naming the file) on malformed content or on two files
-    declaring the same chart.
+    declaring the same chart. A directory that cannot be read is skipped with
+    a warning, or with ``strict`` raises ``DatasetError``, for a caller that
+    must not miss a chart's file (``chartsacquire`` would start a second one).
     """
     root = Path(root)
     results: list[HitlistData] = []
     seen: dict[str, Path] = {}
-    for path in _iter_json_files(root, log):
+    for path in _iter_json_files(root, log, strict):
         data = _read_file(path, hitlists, log)
         if data is None:
             continue
@@ -128,9 +134,16 @@ def read_dataset(
     return results
 
 
-def _iter_json_files(root: Path, log: logging.Logger):
+def _iter_json_files(root: Path, log: logging.Logger, strict: bool = False):
     def onerror(err: OSError) -> None:
-        log.warning(f"cannot read dataset directory {err.filename!r}: {err}")
+        where = str(err.filename) if err.filename is not None else str(root)
+        message = f"cannot read dataset directory {where!r}: {err.strerror or err}"
+        if strict:
+            raise DatasetError(
+                f"{message}; a chart's file may be in it, so make it readable "
+                "or move it out of the dataset directory"
+            ) from err
+        log.warning(message)
 
     for dirpath, _dirnames, filenames in os.walk(root, onerror=onerror):
         for name in sorted(filenames):
