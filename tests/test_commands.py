@@ -8,6 +8,8 @@ data. None of these paths may raise a traceback.
 
 from __future__ import annotations
 
+import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -297,6 +299,173 @@ class TestHitlist:
         out = capsys.readouterr().out
         assert "Missing" in out
         assert "2" in out
+
+
+def _write_dataset(directory, chart, editions):
+    """Write one chart's dataset file; ``editions`` is ``[(axes, size)]``.
+
+    Each edition gets a single entry at position 1, enough for the reader.
+    """
+    directory.mkdir(exist_ok=True)
+    data = {
+        "chart": chart,
+        "songs": {"1": {"artist": "Artist", "title": "Song"}},
+        "editions": [
+            {"axes": axes, "size": size, "entries": [{"position": 1, "songs": ["1"]}]}
+            for axes, size in editions
+        ],
+    }
+    (directory / f"{chart}.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+class TestHitlistMissingSize:
+    """``-M`` counts gaps up to the edition's declared size (#119)."""
+
+    def _opts(self):
+        return SimpleNamespace(format=None, show_missing=True)
+
+    def _own(self, helper, chart, positions):
+        for n, pos in enumerate(positions):
+            _add_item(
+                helper,
+                charts=ChartList([_make_chart(chart, positions=pos)]),
+                artist=f"Artist {n}",
+                title=f"Song {n}",
+                album="Album",
+            )
+
+    def test_declared_size_reaches_past_highest_found(self, env, capsys, tmp_path):
+        helper, plugin = env
+        _write_dataset(tmp_path / "data", "top2000", [({"year": 2023}, 5)])
+        config["hitlisttag"]["dataset_dir"] = str(tmp_path / "data")
+        self._own(helper, "top2000", [{"2023": 1}, {"2023": 3}])
+
+        plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+        assert "Missing the following positions: 2 / 4-5" in capsys.readouterr().out
+
+    def test_none_owned_reports_whole_edition(self, env, capsys, tmp_path):
+        helper, plugin = env
+        _write_dataset(tmp_path / "data", "top2000", [({"year": 2023}, 3)])
+        config["hitlisttag"]["dataset_dir"] = str(tmp_path / "data")
+
+        plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+        out = capsys.readouterr().out
+        assert "No positions found" in out
+        assert "Missing the following positions: 1-3" in out
+
+    def test_top40_matches_year_and_week(self, env, capsys, tmp_path):
+        helper, plugin = env
+        _write_dataset(
+            tmp_path / "data",
+            "top40",
+            [({"year": 2024, "week": 5}, 4), ({"year": 2024, "week": 6}, 9)],
+        )
+        config["hitlisttag"]["dataset_dir"] = str(tmp_path / "data")
+        _add_item(
+            helper,
+            charts=ChartList(
+                [_make_chart("top40", ("year", "week"), positions={"2024": {"5": 2}})]
+            ),
+            artist="Artist",
+            title="Song",
+            album="Album",
+        )
+
+        plugin.show_hitlist(helper.lib, self._opts(), ["top40", "2024", "5"])
+
+        assert "Missing the following positions: 1 / 3-4" in capsys.readouterr().out
+
+    def test_no_dataset_dir_reports_lower_bound(self, env, capsys):
+        helper, plugin = env
+        config["hitlisttag"]["dataset_dir"] = None
+        self._own(helper, "top2000", [{"2023": 1}, {"2023": 3}])
+
+        plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+        assert (
+            "Missing the following positions (up to 3, the highest found; "
+            "edition size unknown): 2"
+        ) in capsys.readouterr().out
+
+    def test_edition_absent_reports_lower_bound(self, env, capsys, tmp_path):
+        helper, plugin = env
+        _write_dataset(tmp_path / "data", "top2000", [({"year": 2022}, 5)])
+        config["hitlisttag"]["dataset_dir"] = str(tmp_path / "data")
+        self._own(helper, "top2000", [{"2023": 1}, {"2023": 3}])
+
+        plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+        out = capsys.readouterr().out
+        assert "(up to 3, the highest found; edition size unknown): 2" in out
+
+    def test_malformed_dataset_warns_and_reports_lower_bound(
+        self, env, capsys, caplog, tmp_path
+    ):
+        helper, plugin = env
+        data = tmp_path / "data"
+        data.mkdir()
+        (data / "top2000.json").write_text("{not json", encoding="utf-8")
+        config["hitlisttag"]["dataset_dir"] = str(data)
+        self._own(helper, "top2000", [{"2023": 1}, {"2023": 3}])
+
+        with caplog.at_level(logging.WARNING):
+            plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+        out = capsys.readouterr().out
+        assert "(up to 3, the highest found; edition size unknown): 2" in out
+        assert "top2000.json" in caplog.text
+
+    def test_dataset_not_read_without_missing_flag(self, env, capsys, caplog, tmp_path):
+        helper, plugin = env
+        data = tmp_path / "data"
+        data.mkdir()
+        # Reading this file would log a warning naming it.
+        (data / "top2000.json").write_text("{not json", encoding="utf-8")
+        config["hitlisttag"]["dataset_dir"] = str(data)
+        self._own(helper, "top2000", [{"2023": 1}])
+
+        with caplog.at_level(logging.WARNING):
+            plugin.show_hitlist(
+                helper.lib,
+                SimpleNamespace(format=None, show_missing=False),
+                ["top2000", "2023"],
+            )
+
+        assert "Missing" not in capsys.readouterr().out
+        assert "top2000.json" not in caplog.text
+
+    def test_position_above_declared_size_not_counted(self, env, capsys, tmp_path):
+        helper, plugin = env
+        _write_dataset(tmp_path / "data", "top2000", [({"year": 2023}, 3)])
+        config["hitlisttag"]["dataset_dir"] = str(tmp_path / "data")
+        self._own(helper, "top2000", [{"2023": 1}, {"2023": 5}])
+
+        plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+        out = capsys.readouterr().out
+        assert "Artist 1 - Album - Song 1" in out
+        assert "Missing the following positions: 2-3\n" in out
+
+    def test_complete_edition_says_none_missing(self, env, capsys, tmp_path):
+        helper, plugin = env
+        _write_dataset(tmp_path / "data", "top2000", [({"year": 2023}, 2)])
+        config["hitlisttag"]["dataset_dir"] = str(tmp_path / "data")
+        self._own(helper, "top2000", [{"2023": 1}, {"2023": 2}])
+
+        plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+        assert "Missing the following positions: none\n" in capsys.readouterr().out
+
+    def test_no_gap_below_highest_says_none(self, env, capsys):
+        helper, plugin = env
+        config["hitlisttag"]["dataset_dir"] = None
+        self._own(helper, "top2000", [{"2023": 1}, {"2023": 2}])
+
+        plugin.show_hitlist(helper.lib, self._opts(), ["top2000", "2023"])
+
+        assert "edition size unknown): none\n" in capsys.readouterr().out
 
 
 # ── config-driven hitlists ────────────────────────────────────────────────
