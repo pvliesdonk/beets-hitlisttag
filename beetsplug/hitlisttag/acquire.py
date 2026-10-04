@@ -459,6 +459,10 @@ def acquire_chart(
     except KeyboardInterrupt:
         # Ctrl-C during a write, or a second one during the save after the
         # first: the write is atomic, so the file is as of the last one done.
+        # A Ctrl-C landing between a write's replace and its bookkeeping in
+        # write() would count those editions as not saved; that window is a
+        # few statements, and the error is on the safe side (a later run
+        # finds them in the file and does not fetch them again).
         result.interrupted = True
     result.unsaved = len(pending)
     return result

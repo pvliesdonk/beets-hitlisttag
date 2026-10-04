@@ -136,7 +136,8 @@ def read_dataset(
 
 def _iter_json_files(root: Path, log: logging.Logger, strict: bool = False):
     def onerror(err: OSError) -> None:
-        message = f"cannot read dataset directory {err.filename!r}: {err.strerror}"
+        where = str(err.filename) if err.filename is not None else str(root)
+        message = f"cannot read dataset directory {where!r}: {err.strerror or err}"
         if strict:
             raise DatasetError(
                 f"{message}; a chart's file may be in it, so make it readable "
