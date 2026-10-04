@@ -391,8 +391,13 @@ beet chartsgen [QUERY]
 
 Without a query it processes every item in the library. Each track's
 artist and title are matched against the dataset's songs — exact
-matching, insensitive to case, diacritics, punctuation, and whitespace —
-and for every chart with a match, the chart's object in the track's
+matching, insensitive to case, diacritics, punctuation, and whitespace,
+and to three differences between sources that are not differences
+between songs: a `((…))` disambiguator in a name (top40.nl's
+`The Scorpions ((GBR))`), `&` against `and`, and one leading `The`
+(unless it is the whole name). Anything else — a qualifier such as
+`(live)` or `- Remix`, `feat.` against `featuring`, a Dutch `De` — is a
+different name to the matcher. For every chart with a match, the chart's object in the track's
 `CHARTS` tag is replaced wholesale from the dataset. Everything else in
 the tag is left untouched: charts the dataset does not know, and charts
 where this particular song has no match, survive unchanged, so

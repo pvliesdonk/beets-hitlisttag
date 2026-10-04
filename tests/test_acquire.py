@@ -109,6 +109,35 @@ class TestMergeAcquired:
         assert _ids(data, 2001) == _ids(data, 2002) == ["1"]
         assert new == 1
 
+    def test_source_disambiguated_artists_keep_distinct_ids(self):
+        # Pins that acquisition's key is the strict one: the matching key of
+        # #170 folds "((GBR))", "&"/"and" and a leading "The", but the source
+        # publishes these as different artists and acquisition keeps them so.
+        existing = _existing(
+            {
+                "1": ("The Scorpions ((GBR))", "Wind Of Change"),
+                "2": ("Simon & Garfunkel", "Cecilia"),
+                "3": ("The Bangles", "Eternal Flame"),
+            }
+        )
+        data, new = merge_acquired(
+            existing,
+            "fake",
+            ["year"],
+            [
+                _acq(
+                    2001,
+                    ("Scorpions", "Wind Of Change"),
+                    ("Simon and Garfunkel", "Cecilia"),
+                    ("Bangles", "Eternal Flame"),
+                )
+            ],
+            SRC,
+            log,
+        )
+        assert new == 3
+        assert _ids(data, 2001) == ["4", "5", "6"]
+
     def test_unnormalizable_names_never_reuse(self):
         existing = _existing({"1": ("A", "?!")})
         data, new = merge_acquired(

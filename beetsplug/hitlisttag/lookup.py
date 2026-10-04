@@ -1,7 +1,9 @@
 """Normalized exact song lookup over the chart dataset.
 
-`normalize` is the single caseless-matching normalizer, shared by
-index-building and per-track lookup so both sides agree by construction.
+`match_key` is the single matching key, shared by index-building and
+per-track lookup so both sides agree by construction. It is layered on
+`normalize`, the strict caseless normalizer that acquisition keeps for reusing
+song ids: what a source publishes as two artists stays two there.
 `SongLookupIndex` maps a normalized (artist, title) key to the chart positions
 of the matching song, and reports a key as ambiguous when two distinct song ids
 in one chart collapse onto it.
@@ -10,6 +12,7 @@ in one chart collapse onto it.
 from __future__ import annotations
 
 import logging
+import re
 import unicodedata
 from dataclasses import dataclass
 
@@ -42,6 +45,28 @@ def normalize(text: str) -> str:
     text = "".join(c for c in text if not unicodedata.combining(c))
     text = "".join(c if c.isalnum() else " " for c in text)
     return " ".join(text.split())
+
+
+# top40.nl's disambiguator for same-named artists: "The Scorpions ((GBR))".
+_DISAMBIGUATOR = re.compile(r"\(\([^)]*\)\)")
+
+
+def match_key(text: str) -> str:
+    """Normalize an artist or title for matching across sources.
+
+    ``normalize`` plus the differences between sources that are not
+    differences between songs: the source's ``((…))`` disambiguator is
+    dropped, ``&`` reads as ``and``, and one leading ``the`` is dropped
+    unless it is the whole name. Acquisition keeps using ``normalize`` to
+    reuse ids, so what a source publishes as two artists stays two.
+    """
+    stripped = _DISAMBIGUATOR.sub(" ", text)
+    if not normalize(stripped):
+        return ""  # a name that is only "&" still normalizes to nothing
+    text = normalize(stripped.replace("&", " and "))
+    if text.startswith("the "):
+        return text[4:]
+    return text
 
 
 @dataclass
@@ -104,7 +129,7 @@ class SongLookupIndex:
                         )
             for song_id, plist in placements.items():
                 song = songs[song_id]
-                na, nt = normalize(song.artist), normalize(song.title)
+                na, nt = match_key(song.artist), match_key(song.title)
                 if not na or not nt:
                     log.warning(
                         f"{data.source}: song {song_id!r} "
@@ -117,7 +142,7 @@ class SongLookupIndex:
         return cls(index)
 
     def lookup(self, artist: str, title: str) -> LookupResult:
-        na, nt = normalize(artist), normalize(title)
+        na, nt = match_key(artist), match_key(title)
         if not na or not nt:
             return LookupResult(normalized=None, placements={}, ambiguous_charts=set())
         by_chart = self._index.get((na, nt))
