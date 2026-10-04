@@ -404,13 +404,21 @@ class HitlistTag(BeetsPlugin):
 
         result = sorted(result, key=lambda x: x[0])
 
+        size = None
+        if opts.show_missing:
+            axes = dict(zip(expected_args, map(int, args[1:]), strict=True))
+            size = self._edition_size(hitlist, axes)
+
         if not result:
             ui.print_(f"No positions found for hitlist {hitlist} for {when}.")
+            if size is not None:
+                missing = list(range(1, size + 1))
+                ui.print_(
+                    f"Missing the following positions: {_collapse_range(missing)}"
+                )
             return
 
-        found = [x[0] for x in result]
-        # TODO: find logical maximum
-        missing = [x for x in range(1, max(found)) if x not in found]
+        found = {x[0] for x in result}
 
         if opts.format:
             fmt = ui.decargs([opts.format])[0]
@@ -420,9 +428,44 @@ class HitlistTag(BeetsPlugin):
             ui.print_(format(item, fmt))
 
         if opts.show_missing:
-            ui.print_(f"Missing the following positions: {_collapse_range(missing)}")
+            if size is None:
+                # Without the edition's declared size, the highest position
+                # found is only a lower bound on it.
+                top = max(found)
+                missing = [x for x in range(1, top) if x not in found]
+                ui.print_(
+                    f"Missing the following positions (up to {top}, the highest "
+                    f"found; edition size unknown): {_collapse_range(missing)}"
+                )
+            else:
+                missing = [x for x in range(1, size + 1) if x not in found]
+                ui.print_(
+                    f"Missing the following positions: {_collapse_range(missing)}"
+                )
 
-        pass
+    def _edition_size(self, hitlist: str, axes: dict[str, int]) -> int | None:
+        """The declared size of one edition in the chart dataset.
+
+        None when there is no ``dataset_dir``, no file for the chart, no such
+        edition in it, or the dataset cannot be read (logged as a warning).
+        """
+        dataset_dir = self.dataset_dir
+        if dataset_dir is None:
+            return None
+        try:
+            datasets = read_dataset(dataset_dir, self.hitlists, self._log)
+        except DatasetError as err:
+            self._log.warning(
+                f"cannot read the chart dataset, so the edition size is unknown: {err}"
+            )
+            return None
+        for data in datasets:
+            if data.chart != hitlist:
+                continue
+            for edition in data.editions:
+                if edition.axes == axes:
+                    return edition.size
+        return None
 
     def generate(
         self, lib: Library, opts: CommonOptionsParser, args: list[str]
