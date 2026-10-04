@@ -343,9 +343,10 @@ class HitlistTag(BeetsPlugin):
         self._log.debug(f"Parsing charts json for {item}:")
         for chart in chartlist:
             if chart.name not in hitlists:
-                self._log.error(
-                    f"Unknown hitlist: {chart.name}. "
-                    f"Will not parse into flexible fields."
+                # Supported, not an error: the chart stays in the tag (#153).
+                self._log.debug(
+                    "{} is not a configured hitlist; its flexible fields are not set",
+                    chart.name,
                 )
                 continue
             # existence
