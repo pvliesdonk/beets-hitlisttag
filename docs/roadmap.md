@@ -510,6 +510,15 @@ remain. `derived`.
   [#160](https://github.com/pvliesdonk/beets-hitlisttag/issues/160)).
   The Top 2000's source publishes no ids, so a source id cannot be the
   only key. `derived`.
+  *Resolved (2026-10-05, the catalog's design, owner-approved):* a link
+  keys on the raw id and records the raw name and source ids; after a
+  re-acquisition it re-binds by source ids, then by the recorded name's
+  match key, and two candidates at either step leave it dangling,
+  reported and kept. The Top 40 and Top 100 survive a from-scratch
+  re-acquisition through the title id; a respelled Top 2000 song is
+  dangling by design until re-linked. `stated` (the decision); the
+  design is in the catalog's spec. `evidenced` once #161 merges:
+  `tests/test_catalog.py::TestDurability`.
 - **Seed quality.** The owner's library (`/mnt/music`, already in
   beets, tagged before this plugin could write those charts — by the
   old tagger project, `derived`) is the seed for the catalog.
@@ -984,5 +993,22 @@ remain. `derived`.
   the spike's "past 95 %" counted the qualifier-suffix rule too, which
   stays the catalog's (a version question), so #170 alone delivers the
   +198. No change to direction.
+- 2026-10-05 — milestone 8's song catalog (#161) designed and built: a
+  sparse, machine-written `catalog.json` above the raw files, resolution
+  through it with the lookup's own contract, and `chartscatalog check`.
+  Owner decisions: curation at the beets prompt; the sparse overlay over
+  a decision log or a full catalog; `check` ships with the catalog; #158
+  is fixed on the acquisition side first. The keying unknown is
+  resolved (above). Two placements in one edition, possible once two
+  songs that charted the same week are merged, are returned by the
+  index and left to #165 to represent in the tag. The method finding
+  held again: the real-data run of `check` found that entries of one
+  raw song agree on the title id while differing on a subtitle id, so
+  source-id agreement is per key; the whole-branch review found that a
+  re-bind could duplicate a link, that a title id shared by a cover
+  bundle needs the name to decide, and that a merged song drops charts
+  it has no link in — the first two fixed before merge, the last a
+  design question filed as #172 and blocking #165. No change to
+  direction.
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464

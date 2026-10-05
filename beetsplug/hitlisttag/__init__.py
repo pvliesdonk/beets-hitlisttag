@@ -16,6 +16,15 @@ from beets.util import syspath
 from mediafile import MediaFile, UnreadableFileError
 
 from .acquire import acquire_chart
+from .catalog import (
+    CatalogError,
+    CatalogIndex,
+    catalog_path,
+    check_catalog,
+    read_catalog,
+    stray_catalog_files,
+    write_catalog_file,
+)
 from .charts import (
     Chart,
     ChartList,
@@ -294,7 +303,14 @@ class HitlistTag(BeetsPlugin):
         )
         cmd5.func = self.acquire
 
-        return [cmd1, cmd2, cmd3, cmd4, cmd5]
+        cmd6 = Subcommand(
+            "chartscatalog",
+            help="Check the song catalog against the chart dataset",
+        )
+        cmd6.parser.set_usage("%prog check")
+        cmd6.func = self.catalog_command
+
+        return [cmd1, cmd2, cmd3, cmd4, cmd5, cmd6]
 
     def show_charts(
         self, lib: Library, opts: CommonOptionsParser, args: list[str]
@@ -589,6 +605,56 @@ class HitlistTag(BeetsPlugin):
         if failed:
             raise ui.UserError(
                 f"hitlisttag: acquisition failed for {', '.join(failed)}"
+            )
+
+    def catalog_command(
+        self, lib: Library, opts: CommonOptionsParser, args: list[str]
+    ) -> None:
+        """Check the song catalog against the dataset (chartscatalog check).
+
+        Re-bound links are written back; dangling links and implicit alias
+        pairs are reported and make the command exit 1, so a routine run
+        notices.
+        """
+        if args != ["check"]:
+            raise ui.UserError("hitlisttag: chartscatalog takes one action: check")
+        dataset_dir = self.dataset_dir
+        if dataset_dir is None:
+            raise ui.UserError(
+                "hitlisttag: chartscatalog requires the dataset_dir option; "
+                "set hitlisttag.dataset_dir in your beets config"
+            )
+        path = catalog_path(dataset_dir)
+        try:
+            datasets = (
+                read_dataset(dataset_dir, self.hitlists, self._log, strict=True)
+                if dataset_dir.exists()
+                else []
+            )
+            catalog = read_catalog(path, self._log)
+        except (DatasetError, CatalogError) as err:
+            raise ui.UserError(f"hitlisttag: {err}") from err
+        if dataset_dir.exists():
+            for stray in stray_catalog_files(dataset_dir, self._log):
+                self._log.warning(
+                    "{0}: looks like a catalog file, but only {1} is read", stray, path
+                )
+        index = CatalogIndex.from_datasets(datasets, catalog, self._log)
+        result = check_catalog(index, catalog)
+        for line in result.lines:
+            ui.print_(line)
+        if result.changed:
+            try:
+                write_catalog_file(catalog, path, self._log)
+            except CatalogError as err:
+                raise ui.UserError(f"hitlisttag: {err}") from err
+        if result.problems:
+            dangling = len(index.bind_report.with_state("dangling"))
+            pairs = len(index.implicit_pairs)
+            raise ui.UserError(
+                f"hitlisttag: chartscatalog check found "
+                f"{dangling} dangling link{'s' if dangling != 1 else ''} and "
+                f"{pairs} implicit alias pair{'s' if pairs != 1 else ''}"
             )
 
     def _generate_item(

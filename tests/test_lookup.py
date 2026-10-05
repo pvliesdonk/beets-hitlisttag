@@ -195,6 +195,7 @@ def test_miss_returns_empty_result():
     assert result.normalized == ("nobody", "nothing")
     assert result.placements == {}
     assert result.ambiguous_charts == set()
+    assert result.unbound_charts == set()
     assert result.is_miss
 
 
