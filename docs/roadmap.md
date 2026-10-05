@@ -323,6 +323,13 @@ remain. `derived`.
   The per-song lookup index is built in memory at command time — chart
   datasets are small enough — and a persisted compiled index is deliberately
   deferred until performance evidence demands it (recorded, not ticketed).
+  *Checked (2026-10-05):* on the owner's three acquired charts (26k raw
+  songs, 188k entries), reading the files and building the catalog index
+  takes 1.2 s per run and a lookup about 8 µs; the evidence doesn't demand
+  it yet (`evidenced`: measured on copies, [#172][n172]). The owner asked
+  whether the catalog's relational shape argues for SQLite and decided it
+  doesn't: the catalog stays JSON, and SQLite, if ever, enters here as a
+  cache rebuilt from the files, never as the record (`stated`).
   The curation overlay's form is milestone 8's decision, not made here. Open
   known-unknown: whether a wholesale re-acquisition must preserve minted ids
   so milestone 7's ontology can link to them durably. `stated` (per-hitlist
@@ -1010,5 +1017,14 @@ remain. `derived`.
   it has no link in — the first two fixed before merge, the last a
   design question filed as #172 and blocking #165. No change to
   direction.
+- 2026-10-05 — #172 decided by the owner: a catalog song's links decide
+  only the charts they name, and every other chart falls back to name
+  matching over every name the song knows, skipping raw songs another
+  catalog song links. Rejected: a merge that links every chart, which is
+  a snapshot that would miss a song's later first entry in another
+  chart. The catalog's storage stays JSON (see *On-disk dataset form*).
+  Built by #179, which now blocks #165. `stated` (the decisions);
+  `derived` (the rejected option's argument).
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
+[n172]: https://github.com/pvliesdonk/beets-hitlisttag/issues/172#issuecomment-5995755414
