@@ -23,7 +23,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .dataset import _id_sort_key
+from .dataset import HitlistData, _id_sort_key
 from .lookup import match_key
 
 FORMAT_VERSION = 1
@@ -296,3 +296,112 @@ def write_catalog_file(catalog: Catalog, path: Path, log: logging.Logger) -> Non
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
+
+
+@dataclass
+class LinkState:
+    """One link's state against the live data; ``previous`` is the raw id a
+    re-bound link had before."""
+
+    song_id: str
+    link: Link
+    state: str  # "bound", "rebound" or "dangling"
+    previous: str | None = None
+
+
+@dataclass
+class BindReport:
+    states: dict[str, list[LinkState]] = field(default_factory=dict)
+
+    def all(self) -> list[LinkState]:
+        return [s for states in self.states.values() for s in states]
+
+    def with_state(self, state: str) -> list[LinkState]:
+        return [s for s in self.all() if s.state == state]
+
+    @property
+    def changed(self) -> bool:
+        return any(s.state == "rebound" for s in self.all())
+
+
+class _LiveChart:
+    """What binding needs from one chart's live data: which raw songs an
+    edition cites, their source ids (when every citing entry agrees) and
+    their names by match key."""
+
+    def __init__(self, data: HitlistData):
+        self.songs = data.songs
+        self.cited: set[str] = set()
+        ids: dict[str, dict[str, str] | None] = {}
+        for edition in data.editions:
+            for entry in edition.entries:
+                for song in entry.songs:
+                    self.cited.add(song.id)
+                    if song.id not in ids:
+                        ids[song.id] = dict(entry.source_ids)
+                    elif ids[song.id] != entry.source_ids:
+                        ids[song.id] = None
+        self.source_ids: dict[str, dict[str, str]] = {
+            sid: mapping for sid, mapping in ids.items() if mapping
+        }
+        self.by_key: dict[tuple[str, str], list[str]] = {}
+        for sid in sorted(self.cited, key=_id_sort_key):
+            key = (match_key(self.songs[sid].artist), match_key(self.songs[sid].title))
+            if key[0] and key[1]:
+                self.by_key.setdefault(key, []).append(sid)
+
+    def by_source_ids(self, recorded: dict[str, str]) -> list[str]:
+        return [
+            sid
+            for sid, live in self.source_ids.items()
+            if all(live.get(k) == v for k, v in recorded.items())
+        ]
+
+    def is_recorded_song(self, link: Link) -> bool:
+        """The live raw song at the link's id is still the song the link
+        recorded: its source ids carry the recorded ones, or, with none
+        recorded, its name has the recorded name's match key."""
+        if link.source_ids:
+            live = self.source_ids.get(link.song, {})
+            return all(live.get(k) == v for k, v in link.source_ids.items())
+        raw = self.songs[link.song]
+        return (match_key(raw.artist), match_key(raw.title)) == link.key()
+
+
+def bind_links(
+    catalog: Catalog, datasets: list[HitlistData], log: logging.Logger
+) -> BindReport:
+    """Check every link against the live data; re-bind in place where exactly
+    one live raw song carries the recorded source ids, else exactly one has
+    the recorded name's match key. Two candidates at a step is dangling. A
+    cited id that now holds another song (ids re-minted from scratch) is
+    re-bound like a missing one, never kept."""
+    live = {data.chart: _LiveChart(data) for data in datasets}
+    report = BindReport()
+    for sid, song in catalog.songs.items():
+        states = report.states.setdefault(sid, [])
+        for link in song.links:
+            chart = live.get(link.chart)
+            if chart is None:
+                states.append(LinkState(sid, link, "dangling"))
+                continue
+            if link.song in chart.cited and chart.is_recorded_song(link):
+                states.append(LinkState(sid, link, "bound"))
+                continue
+            found = chart.by_source_ids(link.source_ids) if link.source_ids else []
+            if not found:
+                found = chart.by_key.get(link.key(), [])
+            if len(found) != 1:
+                states.append(LinkState(sid, link, "dangling"))
+                continue
+            previous, new_id = link.song, found[0]
+            raw = chart.songs[new_id]
+            link.song = new_id
+            link.artist, link.title = raw.artist, raw.title
+            link.source_ids = dict(chart.source_ids.get(new_id, {}))
+            log.info(
+                f"catalog: song {sid} re-bound {link.chart} {previous} -> {new_id} "
+                f"({raw.artist} - {raw.title})"
+            )
+            states.append(LinkState(sid, link, "rebound", previous))
+    return report

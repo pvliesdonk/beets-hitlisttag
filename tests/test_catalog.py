@@ -11,15 +11,19 @@ import pytest
 
 from beetsplug.hitlisttag.catalog import (
     Alias,
+    BindReport,
     Catalog,
     CatalogError,
     CatalogSong,
     Link,
+    LinkState,
+    bind_links,
     catalog_path,
     dump_catalog,
     read_catalog,
     write_catalog_file,
 )
+from beetsplug.hitlisttag.dataset import Edition, Entry, HitlistData, Song
 
 log = logging.getLogger("test.catalog")
 
@@ -306,3 +310,212 @@ class TestWrite:
             write_catalog_file(catalog, catalog.source, log)
         assert catalog.source.read_bytes() == before
         assert not list(tmp_path.glob("*.tmp"))
+
+
+def _data(chart, songs, editions):
+    return HitlistData(
+        chart=chart,
+        songs={s.id: s for s in songs},
+        editions=editions,
+        source=Path(chart),
+    )
+
+
+def _week(year, week, *entries):
+    """entries: (position, [songs], source_ids)"""
+    return Edition(
+        {"year": year, "week": week},
+        40,
+        [Entry(p, songs, ids) for p, songs, ids in entries],
+    )
+
+
+class TestBind:
+    def _catalog(self, *links: Link) -> Catalog:
+        song = CatalogSong("1", "Scorpions", "Hello Josephine", links=list(links))
+        return Catalog({"1": song}, Path("mem"))
+
+    def test_bound_when_the_raw_id_is_cited(self):
+        raw = Song("5", "The Scorpions ((GBR))", "Hello Josephine")
+        data = _data(
+            "top40", [raw], [_week(1965, 1, (1, [raw], {"top40.nl/title": "75"}))]
+        )
+        link = Link("top40", "5", "The Scorpions ((GBR))", "Hello Josephine")
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["bound"]
+        assert not report.changed
+
+    def test_cited_id_holding_another_song_is_rebound_not_kept(self):
+        # From scratch, ids are re-minted in fetch order: the link's id now
+        # cites a different song. Bound needs the recorded song, not just the
+        # id, so this re-binds by source ids instead of keeping Nena.
+        nena = Song("5", "Nena", "99 Luftballons")
+        scorpions = Song("9", "Scorpions ((GBR))", "Hello Josephine")
+        data = _data(
+            "top40",
+            [nena, scorpions],
+            [
+                _week(
+                    1965,
+                    1,
+                    (1, [nena], {"top40.nl/title": "900"}),
+                    (2, [scorpions], {"top40.nl/title": "75"}),
+                )
+            ],
+        )
+        link = Link(
+            "top40",
+            "5",
+            "The Scorpions ((GBR))",
+            "Hello Josephine",
+            {"top40.nl/title": "75"},
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        (state,) = report.all()
+        assert (state.state, state.previous, link.song) == ("rebound", "5", "9")
+
+    def test_cited_id_with_another_name_and_no_ids_is_not_bound(self):
+        other = Song("5", "Nena", "99 Luftballons (1983)")
+        data = _data(
+            "top2000", [other], [Edition({"year": 2023}, 2000, [Entry(1, [other])])]
+        )
+        link = Link("top2000", "5", "Nena", "99 Luftballons")
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+
+    def test_bound_when_the_name_changed_but_ids_agree(self):
+        live = Song("5", "Scorpions ((GBR))", "Hello Josephine")
+        data = _data(
+            "top40", [live], [_week(1965, 1, (1, [live], {"top40.nl/title": "75"}))]
+        )
+        link = Link(
+            "top40",
+            "5",
+            "The Scorpions ((GBR))",
+            "Hello Josephine",
+            {"top40.nl/title": "75"},
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["bound"]
+
+    def test_orphaned_id_is_not_bound(self):
+        # The id exists in the songs table but no edition cites it any more.
+        old = Song("5", "The Scorpions ((GBR))", "Hello Josephine")
+        new = Song("9", "Scorpions ((GBR))", "Hello Josephine")
+        data = _data("top40", [old, new], [_week(1965, 1, (1, [new], {}))])
+        link = Link("top40", "5", "Old Name", "Gone")
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+
+    def test_rebound_by_source_ids(self, caplog):
+        new = Song("9", "Scorpions ((GBR))", "Hello Josephine")
+        data = _data(
+            "top40", [new], [_week(1965, 1, (1, [new], {"top40.nl/title": "75"}))]
+        )
+        link = Link(
+            "top40",
+            "5",
+            "The Scorpions ((GBR))",
+            "Hello Josephine",
+            {"top40.nl/title": "75"},
+        )
+        with caplog.at_level(logging.INFO):
+            report = bind_links(self._catalog(link), [data], log)
+        (state,) = report.all()
+        assert (state.state, state.previous) == ("rebound", "5")
+        assert link.song == "9"
+        assert (link.artist, link.title) == ("Scorpions ((GBR))", "Hello Josephine")
+        assert link.source_ids == {"top40.nl/title": "75"}
+        assert report.changed
+        assert "re-bound" in caplog.text
+
+    def test_rebound_by_name_when_no_ids_recorded(self):
+        new = Song("9", "The Scorpions", "Hello Josephine")
+        data = _data(
+            "top2000", [new], [Edition({"year": 2023}, 2000, [Entry(1, [new])])]
+        )
+        link = Link("top2000", "5", "Scorpions", "Hello Josephine")
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["rebound"]
+        assert link.song == "9"
+
+    def test_rebound_by_name_when_ids_match_nothing(self):
+        new = Song("9", "Scorpions", "Hello Josephine")
+        data = _data(
+            "top40", [new], [_week(1965, 1, (1, [new], {"top40.nl/title": "1"}))]
+        )
+        link = Link(
+            "top40", "5", "Scorpions", "Hello Josephine", {"top40.nl/title": "75"}
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["rebound"]
+
+    def test_two_candidates_by_ids_is_dangling(self):
+        # Review focus 2: the site's id groups a versions bundle.
+        a = Song("1", "Orkest Gudrun Jankis / Stig Rauno", "Let Kiss / Letkis")
+        b = Song("2", "Orkest Gudrun Jankis", "Let Kiss")
+        data = _data(
+            "top40",
+            [a, b],
+            [
+                _week(1965, 1, (1, [a], {"top40.nl/title": "4493"})),
+                _week(1965, 2, (1, [b], {"top40.nl/title": "4493"})),
+            ],
+        )
+        link = Link("top40", "7", "Stig Rauno", "Letkis", {"top40.nl/title": "4493"})
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+        assert link.song == "7"  # untouched
+
+    def test_two_candidates_by_name_is_dangling(self):
+        a = Song("1", "Bangles", "Eternal Flame")
+        b = Song("2", "The Bangles", "Eternal Flame")
+        data = _data(
+            "top40",
+            [a, b],
+            [_week(1989, 1, (1, [a], {})), _week(1989, 2, (1, [b], {}))],
+        )
+        link = Link("top40", "7", "The Bangles", "Eternal Flame")
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+
+    def test_chart_not_in_datasets_is_dangling(self):
+        # Review focus 3: the user removed the chart from hitlists.
+        link = Link("kerst", "7", "Wham!", "Last Christmas")
+        report = bind_links(self._catalog(link), [], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+
+    def test_differing_ids_across_entries_record_none(self):
+        # A raw song whose entries carry different ids has no usable ids, so
+        # a recorded id matches nothing and the name step decides.
+        new = Song("9", "Scorpions", "Hello Josephine")
+        data = _data(
+            "top40",
+            [new],
+            [
+                _week(1965, 1, (1, [new], {"top40.nl/title": "75"})),
+                _week(1965, 2, (1, [new], {"top40.nl/title": "76"})),
+            ],
+        )
+        link = Link(
+            "top40", "5", "Scorpions", "Hello Josephine", {"top40.nl/title": "75"}
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        (state,) = report.all()
+        assert state.state == "rebound"
+        assert link.source_ids == {}
+
+    def test_report_groups_states_by_song(self):
+        raw = Song("5", "A", "T")
+        data = _data("top40", [raw], [_week(1965, 1, (1, [raw], {}))])
+        song = CatalogSong(
+            "1",
+            "A",
+            "T",
+            links=[Link("top40", "5", "A", "T"), Link("top40", "6", "A", "U")],
+        )
+        report = bind_links(Catalog({"1": song}, Path("mem")), [data], log)
+        assert [s.state for s in report.states["1"]] == ["bound", "dangling"]
+        assert len(report.with_state("dangling")) == 1
+        assert isinstance(report, BindReport)
+        assert isinstance(report.states["1"][0], LinkState)
