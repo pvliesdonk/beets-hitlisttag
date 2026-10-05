@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .dataset import HitlistData, Song
 
@@ -89,6 +89,9 @@ class LookupResult:
     normalized: tuple[str, str] | None
     placements: dict[str, list[Placement]]
     ambiguous_charts: set[str]
+    # Charts in which a catalog song's link is dangling (catalog.py); the raw
+    # lookup never sets it.
+    unbound_charts: set[str] = field(default_factory=set)
 
     @property
     def unnormalizable(self) -> bool:

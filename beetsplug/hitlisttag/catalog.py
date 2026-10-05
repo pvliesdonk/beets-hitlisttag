@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .dataset import HitlistData, _id_sort_key
-from .lookup import match_key
+from .lookup import LookupResult, Placement, SongLookupIndex, match_key
 
 FORMAT_VERSION = 1
 FILE_NAME = "catalog.json"
@@ -405,3 +405,120 @@ def bind_links(
             )
             states.append(LinkState(sid, link, "rebound", previous))
     return report
+
+
+@dataclass
+class ImplicitPair:
+    """Two singly-linked raw songs with one match key under different catalog
+    songs: an unmerged pair. Neither implies an alias; ``check`` reports it."""
+
+    key: tuple[str, str]
+    raws: list[tuple[str, str]]
+    songs: list[str]
+    artist: str
+    title: str
+
+
+def placements_by_song(
+    datasets: list[HitlistData],
+) -> dict[tuple[str, str], list[Placement]]:
+    out: dict[tuple[str, str], list[Placement]] = {}
+    for data in datasets:
+        for edition in data.editions:
+            for entry in edition.entries:
+                for song in entry.songs:
+                    out.setdefault((data.chart, song.id), []).append(
+                        Placement(
+                            axes=edition.axes,
+                            position=entry.position,
+                            size=edition.size,
+                        )
+                    )
+    return out
+
+
+class CatalogIndex:
+    """Resolution through the catalog, with ``SongLookupIndex``'s contract.
+
+    Order for a track's match key: an explicit alias; else the live name of
+    a raw song that links to exactly one catalog song (an implicit alias);
+    else the raw lookup.
+    """
+
+    def __init__(
+        self,
+        raw: SongLookupIndex,
+        catalog: Catalog,
+        placements: dict[tuple[str, str], list[Placement]],
+        names: dict[tuple[str, str], tuple[str, str]],
+        report: BindReport,
+    ):
+        self._raw = raw
+        self._catalog = catalog
+        self._placements = placements
+        self.bind_report = report
+        linkers: dict[tuple[str, str], set[str]] = {}
+        for sid, states in report.states.items():
+            for state in states:
+                if state.state != "dangling":
+                    linkers.setdefault((state.link.chart, state.link.song), set()).add(
+                        sid
+                    )
+        implicit: dict[tuple[str, str], tuple[set[str], list[tuple[str, str]]]] = {}
+        for raw_id, sids in linkers.items():
+            if len(sids) != 1 or raw_id not in names:
+                continue
+            artist, title = names[raw_id]
+            key = (match_key(artist), match_key(title))
+            if not key[0] or not key[1]:
+                continue
+            owners, raws = implicit.setdefault(key, (set(), []))
+            owners.update(sids)
+            raws.append(raw_id)
+        self._implicit = {
+            k: next(iter(v[0])) for k, v in implicit.items() if len(v[0]) == 1
+        }
+        self.implicit_pairs = [
+            ImplicitPair(k, sorted(raws), sorted(owners), *names[raws[0]])
+            for k, (owners, raws) in implicit.items()
+            if len(owners) > 1
+        ]
+
+    @classmethod
+    def from_datasets(
+        cls, datasets: list[HitlistData], catalog: Catalog, log: logging.Logger
+    ) -> CatalogIndex:
+        raw = SongLookupIndex.from_datasets(datasets, log)
+        report = bind_links(catalog, datasets, log)
+        names = {
+            (data.chart, song.id): (song.artist, song.title)
+            for data in datasets
+            for song in data.songs.values()
+        }
+        return cls(raw, catalog, placements_by_song(datasets), names, report)
+
+    def lookup(self, artist: str, title: str) -> LookupResult:
+        key = (match_key(artist), match_key(title))
+        if not key[0] or not key[1]:
+            return LookupResult(normalized=None, placements={}, ambiguous_charts=set())
+        sid = self._catalog.alias_owner(key)
+        if sid is None:
+            sid = self._implicit.get(key)
+        if sid is None:
+            return self._raw.lookup(artist, title)
+        placements: dict[str, list[Placement]] = {}
+        unbound: set[str] = set()
+        for state in self.bind_report.states.get(sid, []):
+            link = state.link
+            if state.state == "dangling":
+                unbound.add(link.chart)
+                continue
+            placements.setdefault(link.chart, []).extend(
+                self._placements.get((link.chart, link.song), [])
+            )
+        return LookupResult(
+            normalized=key,
+            placements=placements,
+            ambiguous_charts=set(),
+            unbound_charts=unbound,
+        )

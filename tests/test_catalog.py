@@ -14,7 +14,9 @@ from beetsplug.hitlisttag.catalog import (
     BindReport,
     Catalog,
     CatalogError,
+    CatalogIndex,
     CatalogSong,
+    ImplicitPair,
     Link,
     LinkState,
     bind_links,
@@ -24,6 +26,7 @@ from beetsplug.hitlisttag.catalog import (
     write_catalog_file,
 )
 from beetsplug.hitlisttag.dataset import Edition, Entry, HitlistData, Song
+from beetsplug.hitlisttag.lookup import Placement
 
 log = logging.getLogger("test.catalog")
 
@@ -519,3 +522,196 @@ class TestBind:
         assert len(report.with_state("dangling")) == 1
         assert isinstance(report, BindReport)
         assert isinstance(report.states["1"][0], LinkState)
+
+
+class TestResolve:
+    def _datasets(self):
+        s40 = Song("1", "The Scorpions ((GBR))", "Hello Josephine")
+        n40 = Song("2", "Nena", "99 Luftballons")
+        split = Song("3", "The Beatles", "Strawberry Fields Forever ; Penny Lane")
+        top40 = _data(
+            "top40",
+            [s40, n40, split],
+            [
+                _week(1965, 1, (1, [s40], {"top40.nl/title": "75"}), (2, [n40], {})),
+                _week(1967, 9, (3, [split], {})),
+            ],
+        )
+        s2000 = Song("1", "Scorpions", "Hello Josephine")
+        n2000 = Song("2", "Nena", "99 Luftballons")
+        top2000 = _data(
+            "top2000",
+            [s2000, n2000],
+            [Edition({"year": 2023}, 2000, [Entry(10, [s2000]), Entry(20, [n2000])])],
+        )
+        return [top40, top2000]
+
+    def _index(self, catalog):
+        return CatalogIndex.from_datasets(self._datasets(), catalog, log)
+
+    def test_explicit_alias_gives_the_union_across_charts(self):
+        song = CatalogSong(
+            "1",
+            "Scorpions",
+            "Hello Josephine",
+            [Alias("Scorpions (UK)", "Hello Josephine")],
+            [
+                Link("top40", "1", "The Scorpions ((GBR))", "Hello Josephine"),
+                Link("top2000", "1", "Scorpions", "Hello Josephine"),
+            ],
+        )
+        index = self._index(Catalog({"1": song}, Path("mem")))
+        result = index.lookup("Scorpions (UK)", "Hello Josephine")
+        assert result.placements == {
+            "top40": [Placement({"year": 1965, "week": 1}, 1, 40)],
+            "top2000": [Placement({"year": 2023}, 10, 2000)],
+        }
+        assert result.unbound_charts == set()
+        assert result.normalized == ("scorpions uk", "hello josephine")
+
+    def test_implicit_alias_from_a_singly_linked_raw_name(self):
+        song = CatalogSong(
+            "1",
+            "Scorpions",
+            "Hello Josephine",
+            links=[
+                Link("top40", "1", "The Scorpions ((GBR))", "Hello Josephine"),
+                Link("top2000", "1", "Scorpions", "Hello Josephine"),
+            ],
+        )
+        index = self._index(Catalog({"1": song}, Path("mem")))
+        # Spelled like the Top 2000's raw name; gets the Top 40 history too.
+        result = index.lookup("Scorpions", "Hello Josephine")
+        assert set(result.placements) == {"top40", "top2000"}
+
+    def test_split_shares_placements_between_its_songs(self):
+        raw = Link(
+            "top40", "3", "The Beatles", "Strawberry Fields Forever ; Penny Lane"
+        )
+        a = CatalogSong(
+            "1",
+            "The Beatles",
+            "Strawberry Fields Forever",
+            [Alias("The Beatles", "Strawberry Fields Forever")],
+            [raw],
+        )
+        b = CatalogSong(
+            "2",
+            "The Beatles",
+            "Penny Lane",
+            [Alias("The Beatles", "Penny Lane")],
+            [
+                Link(
+                    "top40",
+                    "3",
+                    "The Beatles",
+                    "Strawberry Fields Forever ; Penny Lane",
+                )
+            ],
+        )
+        index = self._index(Catalog({"1": a, "2": b}, Path("mem")))
+        expected = {"top40": [Placement({"year": 1967, "week": 9}, 3, 40)]}
+        assert index.lookup("Beatles", "Penny Lane").placements == expected
+        assert (
+            index.lookup("The Beatles", "Strawberry Fields Forever").placements
+            == expected
+        )
+        # The raw name links two songs: it implies neither; raw lookup finds it.
+        result = index.lookup("The Beatles", "Strawberry Fields Forever ; Penny Lane")
+        assert result.placements == expected
+        assert index.implicit_pairs == []
+
+    def test_explicit_alias_wins_over_implicit(self):
+        a = CatalogSong(
+            "1",
+            "Nena",
+            "99 Luftballons",
+            links=[Link("top40", "2", "Nena", "99 Luftballons")],
+        )
+        b = CatalogSong(
+            "2",
+            "Nena",
+            "99 Red Balloons",
+            [Alias("Nena", "99 Luftballons")],
+            [Link("top2000", "2", "Nena", "99 Luftballons")],
+        )
+        index = self._index(Catalog({"1": a, "2": b}, Path("mem")))
+        assert set(index.lookup("Nena", "99 Luftballons").placements) == {"top2000"}
+
+    def test_implicit_pair_cancels_to_raw_lookup_and_is_reported(self):
+        a = CatalogSong(
+            "1",
+            "Nena",
+            "99 Luftballons",
+            links=[Link("top40", "2", "Nena", "99 Luftballons")],
+        )
+        b = CatalogSong(
+            "2",
+            "Nena",
+            "99 Luftballons",
+            links=[Link("top2000", "2", "Nena", "99 Luftballons")],
+        )
+        index = self._index(Catalog({"1": a, "2": b}, Path("mem")))
+        result = index.lookup("Nena", "99 Luftballons")
+        assert set(result.placements) == {"top40", "top2000"}  # raw lookup, as today
+        assert index.implicit_pairs == [
+            ImplicitPair(
+                ("nena", "99 luftballons"),
+                [("top2000", "2"), ("top40", "2")],  # lexical: "top2" < "top4"
+                ["1", "2"],
+                "Nena",
+                "99 Luftballons",
+            )
+        ]
+
+    def test_falls_back_to_raw_lookup(self):
+        index = self._index(Catalog({}, Path("mem")))
+        result = index.lookup("Nena", "99 Luftballons")
+        assert set(result.placements) == {"top40", "top2000"}
+        assert index.lookup("Nobody", "Nothing").is_miss
+
+    def test_unbound_charts_name_dangling_links(self):
+        song = CatalogSong(
+            "1",
+            "Nena",
+            "99 Luftballons",
+            [Alias("Nena", "99 Red Balloons")],
+            [
+                Link("top40", "2", "Nena", "99 Luftballons"),
+                Link("top2000", "77", "Nena", "99 Luftballons (1983)"),
+            ],
+        )
+        index = self._index(Catalog({"1": song}, Path("mem")))
+        result = index.lookup("Nena", "99 Red Balloons")
+        assert set(result.placements) == {"top40"}
+        assert result.unbound_charts == {"top2000"}
+
+    def test_song_with_only_dangling_links(self):
+        # Review focus 5.
+        song = CatalogSong(
+            "1",
+            "Nena",
+            "Irgendwie",
+            [Alias("Nena", "Irgendwie")],
+            [Link("top40", "99", "Nena", "Irgendwie")],
+        )
+        index = self._index(Catalog({"1": song}, Path("mem")))
+        result = index.lookup("Nena", "Irgendwie")
+        assert result.placements == {}
+        assert result.unbound_charts == {"top40"}
+
+    def test_alias_that_normalizes_to_nothing_never_matches(self):
+        # Review focus 4.
+        song = CatalogSong(
+            "1",
+            "Nena",
+            "?",
+            [Alias("Nena", "?")],
+            [Link("top40", "2", "Nena", "99 Luftballons")],
+        )
+        index = self._index(Catalog({"1": song}, Path("mem")))
+        assert index.lookup("Nena", "?").unnormalizable
+
+    def test_bind_report_is_exposed(self):
+        index = self._index(Catalog({}, Path("mem")))
+        assert index.bind_report.all() == []
