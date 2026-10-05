@@ -138,13 +138,50 @@ class TestMergeAcquired:
         assert new == 3
         assert _ids(data, 2001) == ["4", "5", "6"]
 
-    def test_unnormalizable_names_never_reuse(self):
-        existing = _existing({"1": ("A", "?!")})
+    def test_names_normalizing_to_nothing_reuse_their_id(self):
+        existing = _existing({"1": ("Nena", "?")})
         data, new = merge_acquired(
-            existing, "fake", ["year"], [_acq(2001, ("A", "?!"))], SRC, log
+            existing,
+            "fake",
+            ["year"],
+            [_acq(2001, ("Nena", "?")), _acq(2002, ("NENA", " ? "))],
+            SRC,
+            log,
+        )
+        assert _ids(data, 2001) == ["1"]
+        assert _ids(data, 2002) == ["1"]
+        assert new == 0
+
+    def test_unnormalizable_song_keeps_one_id_across_runs(self):
+        first, new_first = merge_acquired(
+            None, "fake", ["year"], [_acq(2001, ("Nena", "?"))], SRC, log
+        )
+        second, new_second = merge_acquired(
+            first, "fake", ["year"], [_acq(2002, ("Nena", "?"))], SRC, log
+        )
+        assert (new_first, new_second) == (1, 0)
+        assert _ids(second, 2002) == _ids(second, 2001) == ["1"]
+        assert list(second.songs) == ["1"]
+
+    def test_different_unnormalizable_titles_stay_distinct(self):
+        existing = _existing({"1": ("A", "?")})
+        data, new = merge_acquired(
+            existing,
+            "fake",
+            ["year"],
+            [_acq(2001, ("A", "!!!"), ("A", "?"))],
+            SRC,
+            log,
+        )
+        assert _ids(data, 2001) == ["2", "1"]
+        assert new == 1
+
+    def test_unnormalizable_name_never_collides_with_a_normalized_one(self):
+        existing = _existing({"1": ("A", "x")})
+        data, _ = merge_acquired(
+            existing, "fake", ["year"], [_acq(2001, ("A", "?"))], SRC, log
         )
         assert _ids(data, 2001) == ["2"]
-        assert new == 1
 
     def test_existing_editions_and_unreferenced_songs_survive(self):
         song = Song("1", "Hand", "Made")
