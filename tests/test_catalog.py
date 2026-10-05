@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -133,6 +134,82 @@ class TestModel:
         assert catalog.alias_owner(("nena", "")) is None
 
 
+class TestCopyOnChange:
+    """#174: a catalog can't be edited in place; a change builds a new one
+    through the constructor, so its invariants and alias index always hold."""
+
+    def _song(self, sid, artist, title, alias=None):
+        aliases = [Alias(*alias)] if alias else []
+        return CatalogSong(sid, artist, title, aliases, [Link("c", sid, artist, title)])
+
+    def _catalog(self):
+        return Catalog(
+            {"1": self._song("1", "Bangles", "Eternal Flame", ("Bangles", "EF"))},
+            Path("mem"),
+        )
+
+    def test_songs_cannot_be_assigned_into(self):
+        catalog = self._catalog()
+        with pytest.raises(TypeError):
+            catalog.songs["2"] = self._song("2", "A", "T")  # type: ignore[index]
+
+    def test_a_songs_aliases_and_links_cannot_be_edited(self):
+        song = self._catalog().songs["1"]
+        assert isinstance(song.aliases, tuple) and isinstance(song.links, tuple)
+        with pytest.raises(AttributeError):
+            song.aliases.append(Alias("A", "T"))  # type: ignore[attr-defined]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            song.aliases = ()  # type: ignore[misc]
+
+    def test_the_constructor_does_not_share_the_callers_dict(self):
+        songs = {"1": self._song("1", "Bangles", "Eternal Flame", ("Bangles", "EF"))}
+        catalog = Catalog(songs, Path("mem"))
+        songs["2"] = self._song("2", "Nena", "99 Luftballons", ("Nena", "99"))
+        assert set(catalog.songs) == {"1"}
+        assert catalog.alias_owner(("nena", "99")) is None
+
+    def test_with_song_adds_and_leaves_the_original_alone(self):
+        catalog = self._catalog()
+        bigger = catalog.with_song(self._song("2", "Nena", "99", ("Nena", "99")))
+        assert set(bigger.songs) == {"1", "2"}
+        assert bigger.alias_owner(("nena", "99")) == "2"
+        assert set(catalog.songs) == {"1"}
+        assert catalog.alias_owner(("nena", "99")) is None
+        assert bigger.source == catalog.source
+
+    def test_with_song_replaces_a_song_with_the_same_id(self):
+        catalog = self._catalog()
+        changed = catalog.with_song(
+            self._song("1", "Bangles", "Eternal Flame", ("The Bangles", "Flame"))
+        )
+        assert changed.alias_owner(("bangles", "flame")) == "1"
+        assert changed.alias_owner(("bangles", "ef")) is None
+        assert catalog.alias_owner(("bangles", "ef")) == "1"
+
+    def test_with_song_refuses_a_conflicting_alias(self):
+        catalog = self._catalog()
+        with pytest.raises(ValueError, match="belongs to songs '1' and '2'"):
+            catalog.with_song(self._song("2", "Other", "Song", ("Bangles", "EF")))
+        assert set(catalog.songs) == {"1"}
+
+    def test_without_song_drops_it_and_its_aliases(self):
+        catalog = self._catalog().with_song(
+            self._song("2", "Nena", "99", ("Nena", "99"))
+        )
+        smaller = catalog.without_song("1")
+        assert set(smaller.songs) == {"2"}
+        assert smaller.alias_owner(("bangles", "ef")) is None
+        assert catalog.alias_owner(("bangles", "ef")) == "1"
+
+    def test_without_an_unknown_song_raises(self):
+        with pytest.raises(ValueError, match="no song '9'"):
+            self._catalog().without_song("9")
+
+    def test_a_key_must_hold_the_song_with_that_id(self):
+        with pytest.raises(ValueError, match="key '1' holds song '2'"):
+            Catalog({"1": self._song("2", "A", "T")}, Path("mem"))
+
+
 class TestRead:
     def test_missing_file_is_an_empty_catalog(self, tmp_path):
         catalog = read_catalog(tmp_path / "catalog.json", log)
@@ -150,7 +227,7 @@ class TestRead:
             "Simon & Garfunkel",
             "The Sound of Silence",
         )
-        assert song.aliases == [Alias("Simon and Garfunkel", "The Sounds of Silence")]
+        assert song.aliases == (Alias("Simon and Garfunkel", "The Sounds of Silence"),)
         assert song.links[0] == Link(
             "top40",
             "412",

@@ -20,8 +20,10 @@ import logging
 import os
 import stat
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 
 from .dataset import HitlistData, _id_sort_key, _iter_json_files
 from .lookup import LookupResult, Placement, SongLookupIndex, match_key
@@ -38,7 +40,7 @@ def _is_text(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-@dataclass
+@dataclass(frozen=True)
 class Alias:
     """A spelling that resolves to a catalog song."""
 
@@ -55,6 +57,11 @@ class Link:
 
     ``artist``, ``title`` and ``source_ids`` are the raw song's as recorded
     when the link was made; re-binding updates them to the live values.
+
+    The one mutable part of a catalog: ``bind_links`` updates a link in place
+    when it re-binds, which touches no alias and never duplicates a link
+    within a song. Every other change goes through ``Catalog.with_song`` and
+    ``Catalog.without_song``.
     """
 
     chart: str
@@ -71,15 +78,20 @@ class Link:
         return (match_key(self.artist), match_key(self.title))
 
 
-@dataclass
+@dataclass(frozen=True)
 class CatalogSong:
+    """A song's identity in the catalog. Immutable: ``aliases`` and ``links``
+    are stored as tuples (lists are accepted and converted)."""
+
     id: str
     artist: str
     title: str
-    aliases: list[Alias] = field(default_factory=list)
-    links: list[Link] = field(default_factory=list)
+    aliases: tuple[Alias, ...] = ()
+    links: tuple[Link, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "aliases", tuple(self.aliases))
+        object.__setattr__(self, "links", tuple(self.links))
         if not self.links:
             raise ValueError(f"song {self.id!r} must have at least one link")
         seen: set[tuple[str, str]] = set()
@@ -91,17 +103,26 @@ class CatalogSong:
             seen.add((link.chart, link.song))
 
 
-@dataclass
+@dataclass(frozen=True)
 class Catalog:
-    songs: dict[str, CatalogSong]
+    """The catalog's songs by id. Immutable: ``songs`` is a read-only view of
+    the catalog's own copy, and a change builds a new catalog through
+    ``with_song`` or ``without_song``, which re-run every check here, so the
+    alias index can never go stale."""
+
+    songs: Mapping[str, CatalogSong]
     source: Path
     _alias_owner: dict[tuple[str, str], str] = field(
         init=False, repr=False, compare=False, default_factory=dict
     )
 
     def __post_init__(self) -> None:
+        songs = dict(self.songs)
+        for key, song in songs.items():
+            if song.id != key:
+                raise ValueError(f"key {key!r} holds song {song.id!r}")
         owners: dict[tuple[str, str], str] = {}
-        for sid, song in self.songs.items():
+        for sid, song in songs.items():
             for alias in song.aliases:
                 key = alias.key()
                 if not key[0] or not key[1]:
@@ -112,11 +133,24 @@ class Catalog:
                         f"{owners[key]!r} and {sid!r}"
                     )
                 owners[key] = sid
-        self._alias_owner = owners
+        object.__setattr__(self, "songs", MappingProxyType(songs))
+        object.__setattr__(self, "_alias_owner", owners)
 
     def alias_owner(self, key: tuple[str, str]) -> str | None:
         """The catalog song an explicit alias key resolves to, if any."""
         return self._alias_owner.get(key)
+
+    def with_song(self, song: CatalogSong) -> Catalog:
+        """A new catalog holding ``song``, added or replacing the one with its
+        id; raises ``ValueError`` (and changes nothing) if it breaks a rule."""
+        return Catalog({**self.songs, song.id: song}, self.source)
+
+    def without_song(self, song_id: str) -> Catalog:
+        """A new catalog without song ``song_id``."""
+        if song_id not in self.songs:
+            raise ValueError(f"no song {song_id!r} in the catalog")
+        songs = {sid: s for sid, s in self.songs.items() if sid != song_id}
+        return Catalog(songs, self.source)
 
 
 def catalog_path(dataset_dir: Path | str) -> Path:
@@ -218,7 +252,7 @@ def _parse_song(sid: str, val: object, path: Path) -> CatalogSong:
         except ValueError as err:
             raise CatalogError(f"{path}: {where}: {err}") from err
     try:
-        return CatalogSong(sid, artist, title, aliases, links)
+        return CatalogSong(sid, artist, title, tuple(aliases), tuple(links))
     except ValueError as err:
         raise CatalogError(f"{path}: {err}") from err
 
