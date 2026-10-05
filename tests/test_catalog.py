@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from beetsplug.hitlisttag.acquire import merge_acquired
 from beetsplug.hitlisttag.catalog import (
     Alias,
     BindReport,
@@ -25,7 +26,15 @@ from beetsplug.hitlisttag.catalog import (
     read_catalog,
     write_catalog_file,
 )
-from beetsplug.hitlisttag.dataset import Edition, Entry, HitlistData, Song
+from beetsplug.hitlisttag.dataset import (
+    Edition,
+    Entry,
+    HitlistData,
+    Song,
+    read_dataset,
+    write_dataset_file,
+)
+from beetsplug.hitlisttag.ingest import AcquiredEdition, EditionRef, RawEntry, RawSong
 from beetsplug.hitlisttag.lookup import Placement
 
 log = logging.getLogger("test.catalog")
@@ -778,3 +787,181 @@ class TestResolve:
     def test_bind_report_is_exposed(self):
         index = self._index(Catalog({}, Path("mem")))
         assert index.bind_report.all() == []
+
+
+HITLISTS = {"top40": ["year", "week"], "top2000": ["year"]}
+
+
+def _acquired(axes, *entries):
+    """entries: (artist, title, source_ids)."""
+    raw = tuple(
+        RawEntry(i + 1, (RawSong(a, t),), ids) for i, (a, t, ids) in enumerate(entries)
+    )
+    return AcquiredEdition(EditionRef(axes), len(raw), raw)
+
+
+def _acquire(data_dir, existing, chart, editions):
+    data, _ = merge_acquired(
+        existing,
+        chart,
+        HITLISTS[chart],
+        editions,
+        data_dir / f"{chart}.json",
+        log,
+        replace=existing is not None,
+    )
+    write_dataset_file(data, data_dir / f"{chart}.json", HITLISTS, log)
+
+
+def _history(index):
+    scorpions = index.lookup("Scorpions", "Hello Josephine")
+    nena = index.lookup("Nena", "99 Luftballons")
+    return scorpions, nena
+
+
+class TestDurability:
+    """The criterion's third clause: hand corrections survive a full
+    re-acquisition, both --force over the file and from scratch."""
+
+    V1_TOP40 = [
+        _acquired(
+            {"year": 1965, "week": 1},
+            ("The Scorpions ((GBR))", "Hello Josephine", {"top40.nl/title": "75"}),
+            ("Nena", "99 Luftballons", {"top40.nl/title": "900"}),
+        )
+    ]
+    V1_TOP2000 = [
+        _acquired(
+            {"year": 2023},
+            ("Scorpions", "Hello Josephine", {}),
+            ("Nena", "99 Luftballons", {}),
+        )
+    ]
+    # The source respelled every song: the Top 40 keeps its ids (re-bind by
+    # source id); the Top 2000 has none, so Scorpions re-binds by name and
+    # Nena's new title is dangling by design.
+    V2_TOP40 = [
+        _acquired(
+            {"year": 1965, "week": 1},
+            ("Scorpions ((GBR))", "Hello Josephine", {"top40.nl/title": "75"}),
+            ("Nena", "99 Luftballons", {"top40.nl/title": "900"}),
+        )
+    ]
+    V2_TOP2000 = [
+        _acquired(
+            {"year": 2023},
+            ("The Scorpions", "Hello Josephine", {}),
+            ("Nena", "99 Luftballons (1983)", {}),
+        )
+    ]
+
+    def _seed(self, tmp_path):
+        data_dir = tmp_path / "data"
+        _acquire(data_dir, None, "top40", self.V1_TOP40)
+        _acquire(data_dir, None, "top2000", self.V1_TOP2000)
+        datasets = {d.chart: d for d in read_dataset(data_dir, HITLISTS, log)}
+        catalog = Catalog(
+            {
+                "1": CatalogSong(
+                    "1",
+                    "Scorpions",
+                    "Hello Josephine",
+                    [Alias("Scorpions", "Hello Josephine")],
+                    [
+                        Link(
+                            "top40",
+                            "1",
+                            "The Scorpions ((GBR))",
+                            "Hello Josephine",
+                            {"top40.nl/title": "75"},
+                        ),
+                        Link("top2000", "1", "Scorpions", "Hello Josephine"),
+                    ],
+                ),
+                "2": CatalogSong(
+                    "2",
+                    "Nena",
+                    "99 Luftballons",
+                    [Alias("Nena", "99 Luftballons")],
+                    [
+                        Link(
+                            "top40",
+                            "2",
+                            "Nena",
+                            "99 Luftballons",
+                            {"top40.nl/title": "900"},
+                        ),
+                        Link("top2000", "2", "Nena", "99 Luftballons"),
+                    ],
+                ),
+            },
+            catalog_path(data_dir),
+        )
+        write_catalog_file(catalog, catalog.source, log)
+        return data_dir, datasets
+
+    def _assert_v1(self, index):
+        scorpions, nena = _history(index)
+        assert scorpions.placements == {
+            "top40": [Placement({"year": 1965, "week": 1}, 1, 2)],
+            "top2000": [Placement({"year": 2023}, 1, 2)],
+        }
+        assert nena.placements == {
+            "top40": [Placement({"year": 1965, "week": 1}, 2, 2)],
+            "top2000": [Placement({"year": 2023}, 2, 2)],
+        }
+
+    def _assert_v2(self, index):
+        scorpions, nena = _history(index)
+        assert scorpions.placements == {
+            "top40": [Placement({"year": 1965, "week": 1}, 1, 2)],
+            "top2000": [Placement({"year": 2023}, 1, 2)],
+        }
+        assert scorpions.unbound_charts == set()
+        assert nena.placements == {
+            "top40": [Placement({"year": 1965, "week": 1}, 2, 2)]
+        }
+        assert nena.unbound_charts == {"top2000"}
+
+    def test_before_any_reacquisition(self, tmp_path):
+        data_dir, datasets = self._seed(tmp_path)
+        catalog = read_catalog(catalog_path(data_dir), log)
+        self._assert_v1(
+            CatalogIndex.from_datasets(list(datasets.values()), catalog, log)
+        )
+
+    def test_survives_force_reacquisition(self, tmp_path):
+        data_dir, datasets = self._seed(tmp_path)
+        _acquire(data_dir, datasets["top40"], "top40", self.V2_TOP40)
+        _acquire(data_dir, datasets["top2000"], "top2000", self.V2_TOP2000)
+        live = read_dataset(data_dir, HITLISTS, log)
+        # --force keeps the songs table: the respelled songs got new ids 3.
+        assert {d.chart: sorted(d.songs) for d in live} == {
+            "top40": ["1", "2", "3"],
+            "top2000": ["1", "2", "3", "4"],
+        }
+        catalog = read_catalog(catalog_path(data_dir), log)
+        index = CatalogIndex.from_datasets(live, catalog, log)
+        self._assert_v2(index)
+        states = {(s.link.chart, s.state) for s in index.bind_report.all()}
+        assert states == {
+            ("top40", "rebound"),
+            ("top40", "bound"),
+            ("top2000", "rebound"),
+            ("top2000", "dangling"),
+        }
+
+    def test_survives_from_scratch_reacquisition(self, tmp_path):
+        data_dir, _ = self._seed(tmp_path)
+        for name in ("top40.json", "top2000.json"):
+            (data_dir / name).unlink()
+        _acquire(data_dir, None, "top40", self.V2_TOP40)
+        _acquire(data_dir, None, "top2000", self.V2_TOP2000)
+        live = read_dataset(data_dir, HITLISTS, log)
+        assert {d.chart: sorted(d.songs) for d in live} == {
+            "top40": ["1", "2"],
+            "top2000": ["1", "2"],
+        }
+        catalog = read_catalog(catalog_path(data_dir), log)
+        index = CatalogIndex.from_datasets(live, catalog, log)
+        self._assert_v2(index)
