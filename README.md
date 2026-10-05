@@ -18,7 +18,9 @@ It provides:
 - a `chartsacquire` command that fills a local chart dataset from public
   sources, one chart at a time, through pluggable ingestors;
 - a `chartsgen` command that generates `CHARTS` tags from that dataset
-  (see [The chart dataset](#the-chart-dataset)).
+  (see [The chart dataset](#the-chart-dataset));
+- a `chartscatalog` command that checks the song catalog against the
+  dataset (see [The song catalog](#the-song-catalog)).
 
 ## Installation
 
@@ -200,6 +202,76 @@ formula as the default for every chart.
 `highest` is the best (lowest-numbered) position across editions. In the
 example above, Bohemian Rhapsody scores (2000 + 1 − 1) + (2000 + 1 − 2)
 = 3999 with `highest` 1.
+
+### The song catalog
+
+The dataset's raw files are rewritten by every `chartsacquire` run and hold
+names as each source published them, so the same song can sit under
+several spellings across editions and charts. The song catalog is the layer
+above them: `catalog.json` in `dataset_dir`, written by the plugin's
+`chartscatalog` commands and not meant for hand-editing. It holds only
+songs that carry a decision; everything else matches as described under
+[`chartsgen`](#chartsgen).
+
+A catalog song has a display name, `aliases` (spellings that resolve to it,
+matched like `chartsgen` matches), and `links`: the raw songs, per chart,
+whose chart positions are its own. A link records the raw song's id, name
+and source ids as they were when the link was made. Several links under one
+song merge spellings and charts into one history; the same raw song linked
+from two songs is a split (a double A-side crediting both).
+
+```json
+{
+  "catalog": 1,
+  "songs": {
+    "1": {
+      "artist": "Simon & Garfunkel",
+      "title": "The Sound of Silence",
+      "aliases": [{"artist": "Simon and Garfunkel", "title": "The Sounds of Silence"}],
+      "links": [
+        {"chart": "top40", "song": "412", "artist": "Simon & Garfunkel",
+         "title": "The Sounds Of Silence", "source_ids": {"top40.nl/title": "9981"}},
+        {"chart": "top2000", "song": "77", "artist": "Simon & Garfunkel",
+         "title": "The Sound of Silence"}
+      ]
+    }
+  }
+}
+```
+
+Rules the file keeps: an alias belongs to one song; a song has at least one
+link; a song links a raw song at most once. The name `catalog` is reserved:
+don't configure a hitlist called `catalog`, because its dataset file would
+take the catalog's path.
+
+A track resolves in this order: an alias it spells; else the name of a raw
+song that links to exactly one catalog song; else the plain match. A song's
+history is the union over its links, so a track spelled like the Top 40's
+entry still gets the Top 2000's positions once the two are linked.
+`chartsgen` does not consult the catalog yet
+([#165](https://github.com/pvliesdonk/beets-hitlisttag/issues/165)); today
+the catalog is read by `chartscatalog check` and its lookup index only.
+
+**After a re-acquisition.** A link points at a raw id; a forced or
+from-scratch re-acquisition can re-mint ids or respell names. On every use
+the plugin checks each link against the live data: it is *bound* when its id
+is still cited by an edition and still holds the recorded song (its source
+ids agree, or, without any, its name does); otherwise it is *re-bound* when exactly one
+live raw song carries the recorded source ids, or, failing that, exactly one
+has the recorded name; otherwise it is *dangling* and contributes nothing
+until you re-link it. Two candidates never count as a match. So Top 40 and
+Top 100 links survive even a from-scratch re-acquisition through top40.nl's
+title ids; a Top 2000 link survives while Wikipedia's spelling matches, and
+a respelled Top 2000 song shows up as dangling.
+
+```
+beet chartscatalog check
+```
+
+prints the counts and every re-bound and dangling link, writes re-bound
+links back, and exits 1 when a link is dangling or when two raw songs with
+one name link different catalog songs (a merge you may want). A missing
+catalog is an empty one.
 
 ## Usage
 
@@ -428,6 +500,15 @@ values, and it materializes the same per-chart flexible fields as
 externally produced ones. A track that isn't rewritten doesn't get its
 other media fields written either; use `beet write` for that.
 
+### `chartscatalog`
+
+Checks the song catalog (see [The song catalog](#the-song-catalog))
+against the dataset; requires `dataset_dir` to be configured.
+
+```
+beet chartscatalog check
+```
+
 ## Keeping the dataset current
 
 Run `chartsacquire` and then `chartsgen` on a schedule to keep your
@@ -516,6 +597,8 @@ beets configuration directory, and `~` is expanded:
 hitlisttag:
   dataset_dir: ~/charts
 ```
+
+The song catalog lives at `dataset_dir/catalog.json`; `catalog` is a reserved hitlist name.
 
 Ingestor scripts of your own are read from `ingestor_dir`, which
 defaults to `ingestors` under the beets configuration directory (for
