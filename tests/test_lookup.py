@@ -199,6 +199,28 @@ def test_miss_returns_empty_result():
     assert result.is_miss
 
 
+def test_songs_for_returns_the_raw_songs_per_chart():
+    a = Song(id="1", artist="Bangles", title="Eternal Flame")
+    b = Song(id="2", artist="The Bangles", title="Eternal Flame")
+    data = _data(
+        "top40",
+        [a, b],
+        [Edition({"year": 1989, "week": 1}, 40, [Entry(1, [a]), Entry(2, [b])])],
+    )
+    index = SongLookupIndex.from_datasets([data], log)
+
+    found = index.songs_for(("bangles", "eternal flame"))
+    assert found == {
+        "top40": {
+            "1": [Placement({"year": 1989, "week": 1}, 1, 40)],
+            "2": [Placement({"year": 1989, "week": 1}, 2, 40)],
+        }
+    }
+    assert index.songs_for(("nobody", "nothing")) == {}
+    found["top40"].clear()  # a copy: the index is untouched
+    assert len(index.songs_for(("bangles", "eternal flame"))["top40"]) == 2
+
+
 def test_two_ids_one_chart_same_key_is_ambiguous():
     a = Song(id="1", artist="The Fixtures", title="Song")
     b = Song(id="2", artist="the  fixtures", title="song")  # distinct id, same key

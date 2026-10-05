@@ -144,6 +144,11 @@ class SongLookupIndex:
                 by_chart.setdefault(data.chart, {})[song_id] = plist
         return cls(index)
 
+    def songs_for(self, key: tuple[str, str]) -> dict[str, dict[str, list[Placement]]]:
+        """The raw songs whose match key is ``key``: chart -> song id ->
+        placements. A copy; empty when nothing has the key."""
+        return {chart: dict(songs) for chart, songs in self._index.get(key, {}).items()}
+
     def lookup(self, artist: str, title: str) -> LookupResult:
         na, nt = match_key(artist), match_key(title)
         if not na or not nt:

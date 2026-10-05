@@ -101,6 +101,38 @@ class TestCheck:
         assert "catalog: 1 song, 1 alias, 1 link" in out
         assert "links: 1 bound, 0 re-bound, 0 dangling" in out
 
+    def test_ambiguous_fallback_is_reported_and_exits_zero(self, env, capsys):
+        _seed(env)
+        _dataset(
+            env,
+            "top2000",
+            {
+                "3": {"artist": "Scorpions", "title": "Hello Josephine"},
+                "4": {"artist": "Scorpions (UK)", "title": "Hello Josephine"},
+            },
+            [
+                {
+                    "axes": {"year": 2023},
+                    "size": 2000,
+                    "entries": [
+                        {"position": 9, "songs": ["3"]},
+                        {"position": 11, "songs": ["4"]},
+                    ],
+                }
+            ],
+        )
+        catalog = json.loads((env.data / "catalog.json").read_text(encoding="utf-8"))
+        catalog["songs"]["1"]["aliases"].append(
+            {"artist": "Scorpions (UK)", "title": "Hello Josephine"}
+        )
+        _write(env.data / "catalog.json", catalog)
+        _run(env, "check")  # no UserError: not counted as a problem
+        out = capsys.readouterr().out
+        assert (
+            "ambiguous fallback: song 1 (Scorpions - Hello Josephine) top2000: "
+            "3 (Scorpions - Hello Josephine), 4 (Scorpions (UK) - Hello Josephine)"
+        ) in out
+
     def test_missing_catalog_is_empty_and_exits_zero(self, env, capsys):
         _dataset(env, "top40", {}, [])
         _run(env, "check")
