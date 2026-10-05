@@ -36,9 +36,23 @@ from .lookup import normalize
 SongKey = tuple[str, str]
 
 
+def _key_part(text: str) -> str:
+    """``normalize(text)``, or the stripped raw text when that is empty.
+
+    Normalized text holds only letters, digits and single spaces, so a
+    fallback (a non-empty string with no alphanumerics) never equals a
+    normalized part: names that ``normalize`` keeps apart stay apart.
+    """
+    return normalize(text) or text.strip()
+
+
 def _key(artist: str, title: str) -> SongKey | None:
-    """Normalized (artist, title), or None when either normalizes to nothing."""
-    artist_key, title_key = normalize(artist), normalize(title)
+    """Reuse key (artist, title), or None when either part is blank.
+
+    A part that normalizes to nothing (the title "?") keys by its stripped
+    raw text, so such a song still reuses its id; only a blank part gives None.
+    """
+    artist_key, title_key = _key_part(artist), _key_part(title)
     if not artist_key or not title_key:
         return None
     return (artist_key, title_key)
@@ -61,10 +75,12 @@ def merge_acquired(
     are not in that set are dropped (``--prune``). Songs are never deleted,
     so ids stay valid for anything that links to them. Otherwise existing
     songs and editions are kept unchanged. A song is reused by its
-    normalized key (lowest id wins among existing duplicates, with a warning);
-    otherwise a new id continues the file's numeric sequence. Within one
-    edition an id never repeats: a second entry resolving to the same key gets
-    its own id. Editions are sorted by configured axis order, songs by id.
+    normalized key (lowest id wins among existing duplicates, with a warning;
+    a part that normalizes to nothing, like the title "?", keys by its
+    stripped raw text instead); otherwise a new id continues the file's
+    numeric sequence. Within one edition an id never repeats: a second entry
+    resolving to the same key gets its own id. Editions are sorted by
+    configured axis order, songs by id.
     Each entry keeps the source_ids its RawEntry carried; they play no part
     in reusing or minting song ids.
     """

@@ -358,7 +358,9 @@ chart as up to date and doesn't touch the file.
 
 Song ids stay the same across runs: a song whose artist and title are
 already in the file keeps its id (compared the way `chartsgen` matches,
-ignoring case, diacritics and punctuation). Songs are never deleted.
+ignoring case, diacritics and punctuation; a name that is nothing but
+punctuation, like a song titled `?`, is compared as written). Songs are
+never deleted.
 
 An edition that can't be fetched or read is skipped, and the chart
 carries on with the next one; after 3 failed editions in a row it stops,
