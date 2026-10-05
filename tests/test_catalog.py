@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,9 @@ from beetsplug.hitlisttag.catalog import (
     CatalogSong,
     Link,
     catalog_path,
+    dump_catalog,
     read_catalog,
+    write_catalog_file,
 )
 
 log = logging.getLogger("test.catalog")
@@ -249,3 +252,57 @@ class TestRead:
         path.write_bytes(b"\xff\xfe")
         with pytest.raises(CatalogError, match="cannot read catalog file"):
             read_catalog(path, log)
+
+
+class TestWrite:
+    def _catalog(self, tmp_path) -> Catalog:
+        song = CatalogSong(
+            "2",
+            "Nena",
+            "99 Luftballons",
+            [Alias("Nena", "99 Red Balloons")],
+            [Link("top40", "7", "Nena", "99 Luftballons", {"top40.nl/title": "900"})],
+        )
+        other = CatalogSong("10", "A", "T", links=[Link("top2000", "3", "A", "T")])
+        return Catalog({"10": other, "2": song}, tmp_path / "catalog.json")
+
+    def test_dump_orders_songs_by_id_and_omits_empty_source_ids(self, tmp_path):
+        text = dump_catalog(self._catalog(tmp_path))
+        payload = json.loads(text)
+        assert list(payload["songs"]) == ["2", "10"]
+        assert payload["catalog"] == 1
+        assert "source_ids" not in payload["songs"]["10"]["links"][0]
+        assert payload["songs"]["2"]["links"][0]["source_ids"] == {
+            "top40.nl/title": "900"
+        }
+        assert text.endswith("\n")
+        assert "Luftballons" in text  # ensure_ascii=False keeps text readable
+
+    def test_write_round_trips_through_the_reader(self, tmp_path):
+        catalog = self._catalog(tmp_path)
+        write_catalog_file(catalog, catalog.source, log)
+        again = read_catalog(catalog.source, log)
+        assert again.songs == catalog.songs
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_write_refuses_a_dataset_file_at_the_reserved_path(self, tmp_path):
+        path = tmp_path / "catalog.json"
+        before = json.dumps({"chart": "catalog", "songs": {}, "editions": []})
+        path.write_text(before, encoding="utf-8")
+        with pytest.raises(CatalogError, match="reserved"):
+            write_catalog_file(self._catalog(tmp_path), path, log)
+        assert path.read_text(encoding="utf-8") == before
+
+    def test_failed_write_leaves_the_file_untouched(self, tmp_path, monkeypatch):
+        catalog = self._catalog(tmp_path)
+        write_catalog_file(catalog, catalog.source, log)
+        before = catalog.source.read_bytes()
+
+        def boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(os, "replace", boom)
+        with pytest.raises(OSError):
+            write_catalog_file(catalog, catalog.source, log)
+        assert catalog.source.read_bytes() == before
+        assert not list(tmp_path.glob("*.tmp"))

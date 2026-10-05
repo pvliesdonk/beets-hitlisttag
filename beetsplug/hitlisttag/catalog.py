@@ -17,9 +17,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import stat
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .dataset import _id_sort_key
 from .lookup import match_key
 
 FORMAT_VERSION = 1
@@ -217,3 +221,78 @@ def _parse_song(sid: str, val: object, path: Path) -> CatalogSong:
         return CatalogSong(sid, artist, title, aliases, links)
     except ValueError as err:
         raise CatalogError(f"{path}: {err}") from err
+
+
+def _dump_link(link: Link) -> dict:
+    out: dict = {
+        "chart": link.chart,
+        "song": link.song,
+        "artist": link.artist,
+        "title": link.title,
+    }
+    if link.source_ids:
+        out["source_ids"] = dict(sorted(link.source_ids.items()))
+    return out
+
+
+def _dump_song(song: CatalogSong) -> dict:
+    return {
+        "artist": song.artist,
+        "title": song.title,
+        "aliases": [{"artist": a.artist, "title": a.title} for a in song.aliases],
+        "links": [_dump_link(link) for link in song.links],
+    }
+
+
+def dump_catalog(catalog: Catalog) -> str:
+    """Serialize in the documented shape: songs by id, 2-space indent."""
+    payload = {
+        "catalog": FORMAT_VERSION,
+        "songs": {
+            sid: _dump_song(song)
+            for sid, song in sorted(
+                catalog.songs.items(), key=lambda item: _id_sort_key(item[0])
+            )
+        },
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def _shape(catalog: Catalog) -> dict:
+    return {sid: _dump_song(song) for sid, song in catalog.songs.items()}
+
+
+def write_catalog_file(catalog: Catalog, path: Path, log: logging.Logger) -> None:
+    """Atomically replace ``path`` with ``catalog``, or leave it untouched.
+
+    Same pattern as ``write_dataset_file``: temp file in the same directory,
+    re-read with the catalog reader, compared, atomic replace. Refuses to
+    overwrite a dataset file at the reserved path (``read_catalog`` raises).
+    """
+    path = Path(path).resolve()
+    read_catalog(path, log)  # a dataset file here is a CatalogError
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.stem}.", suffix=".json.tmp"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(dump_catalog(catalog))
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, mode)
+        try:
+            reread = read_catalog(tmp, log)
+        except CatalogError as err:
+            raise CatalogError(f"internal error writing the catalog: {err}") from err
+        if _shape(reread) != _shape(catalog):
+            raise CatalogError(
+                "internal error writing the catalog: the re-read file does not "
+                "match the data written"
+            )
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
