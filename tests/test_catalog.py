@@ -664,6 +664,69 @@ class TestResolve:
             )
         ]
 
+    def test_implicit_pairs_do_not_depend_on_catalog_order(self):
+        n40 = Song("2", "The Nena", "99 Luftballons")
+        a40 = Song("5", "The Abba", "Waterloo")
+        top40 = _data(
+            "top40",
+            [n40, a40],
+            [_week(1984, 1, (1, [n40], {}), (2, [a40], {}))],
+        )
+        n2000 = Song("2", "Nena", "99 Luftballons")
+        a2000 = Song("5", "Abba", "Waterloo")
+        top2000 = _data(
+            "top2000",
+            [n2000, a2000],
+            [Edition({"year": 2023}, 2000, [Entry(1, [n2000]), Entry(2, [a2000])])],
+        )
+        songs = {
+            "1": CatalogSong(
+                "1",
+                "Nena",
+                "99 Luftballons",
+                links=[Link("top40", "2", "The Nena", "99 Luftballons")],
+            ),
+            "2": CatalogSong(
+                "2",
+                "Nena",
+                "99 Luftballons",
+                links=[Link("top2000", "2", "Nena", "99 Luftballons")],
+            ),
+            "3": CatalogSong(
+                "3",
+                "Abba",
+                "Waterloo",
+                links=[Link("top40", "5", "The Abba", "Waterloo")],
+            ),
+            "4": CatalogSong(
+                "4",
+                "Abba",
+                "Waterloo",
+                links=[Link("top2000", "5", "Abba", "Waterloo")],
+            ),
+        }
+        index = CatalogIndex.from_datasets(
+            [top40, top2000], Catalog(songs, Path("mem")), log
+        )
+        # Sorted by key (not catalog order); the name comes from the first
+        # sorted raw (top2000 before top40), not the first-linked one.
+        assert index.implicit_pairs == [
+            ImplicitPair(
+                ("abba", "waterloo"),
+                [("top2000", "5"), ("top40", "5")],
+                ["3", "4"],
+                "Abba",
+                "Waterloo",
+            ),
+            ImplicitPair(
+                ("nena", "99 luftballons"),
+                [("top2000", "2"), ("top40", "2")],
+                ["1", "2"],
+                "Nena",
+                "99 Luftballons",
+            ),
+        ]
+
     def test_falls_back_to_raw_lookup(self):
         index = self._index(Catalog({}, Path("mem")))
         result = index.lookup("Nena", "99 Luftballons")

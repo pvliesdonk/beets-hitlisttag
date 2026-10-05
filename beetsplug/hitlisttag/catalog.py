@@ -478,11 +478,12 @@ class CatalogIndex:
         self._implicit = {
             k: next(iter(v[0])) for k, v in implicit.items() if len(v[0]) == 1
         }
-        self.implicit_pairs = [
-            ImplicitPair(k, sorted(raws), sorted(owners), *names[raws[0]])
-            for k, (owners, raws) in implicit.items()
-            if len(owners) > 1
-        ]
+        pairs = []
+        for key, (owners, unsorted) in implicit.items():
+            if len(owners) > 1:
+                raws = sorted(unsorted)
+                pairs.append(ImplicitPair(key, raws, sorted(owners), *names[raws[0]]))
+        self.implicit_pairs = sorted(pairs, key=lambda pair: pair.key)
 
     @classmethod
     def from_datasets(
