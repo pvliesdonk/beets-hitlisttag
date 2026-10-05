@@ -266,18 +266,22 @@ def write_catalog_file(catalog: Catalog, path: Path, log: logging.Logger) -> Non
     """Atomically replace ``path`` with ``catalog``, or leave it untouched.
 
     Same pattern as ``write_dataset_file``: temp file in the same directory,
-    re-read with the catalog reader, compared, atomic replace. Refuses to
-    overwrite a dataset file at the reserved path (``read_catalog`` raises).
+    re-read with the catalog reader, compared, atomic replace. First reads
+    the existing file, so it refuses to overwrite a dataset file at the
+    reserved path or any other malformed catalog (``read_catalog`` raises
+    ``CatalogError``). A filesystem failure is a ``CatalogError`` naming the
+    path, and the existing file is left as it was.
     """
     path = Path(path).resolve()
-    read_catalog(path, log)  # a dataset file here is a CatalogError
-    path.parent.mkdir(parents=True, exist_ok=True)
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
-    fd, tmp_name = tempfile.mkstemp(
-        dir=path.parent, prefix=f".{path.stem}.", suffix=".json.tmp"
-    )
-    tmp = Path(tmp_name)
+    read_catalog(path, log)  # a dataset file or a malformed catalog is refused
+    tmp: Path | None = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o644
+        fd, tmp_name = tempfile.mkstemp(
+            dir=path.parent, prefix=f".{path.stem}.", suffix=".json.tmp"
+        )
+        tmp = Path(tmp_name)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(dump_catalog(catalog))
             fh.flush()
@@ -293,8 +297,13 @@ def write_catalog_file(catalog: Catalog, path: Path, log: logging.Logger) -> Non
                 "match the data written"
             )
         os.replace(tmp, path)
+    except OSError as err:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        raise CatalogError(f"cannot write {path}: {err}") from err
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
         raise
 
 
@@ -327,8 +336,7 @@ class BindReport:
 class _LiveChart:
     """What binding needs from one chart's live data: which raw songs an
     edition cites, their source ids (the keys, with their values, on which
-    every citing entry agrees) and their
-    names by match key."""
+    every citing entry agrees) and their names by match key."""
 
     def __init__(self, data: HitlistData):
         self.songs = data.songs
@@ -350,7 +358,7 @@ class _LiveChart:
                 self.source_ids[sid] = agreed
         self.by_key: dict[tuple[str, str], list[str]] = {}
         for sid in sorted(self.cited, key=_id_sort_key):
-            key = (match_key(self.songs[sid].artist), match_key(self.songs[sid].title))
+            key = self.name_key(sid)
             if key[0] and key[1]:
                 self.by_key.setdefault(key, []).append(sid)
 
@@ -363,23 +371,33 @@ class _LiveChart:
 
     def is_recorded_song(self, link: Link) -> bool:
         """The live raw song at the link's id is still the song the link
-        recorded: its source ids carry the recorded ones, or, with none
-        recorded, its name has the recorded name's match key."""
-        if link.source_ids:
-            live = self.source_ids.get(link.song, {})
-            return all(live.get(k) == v for k, v in link.source_ids.items())
+        recorded. With source ids recorded, its own carry them and, where
+        another live cited raw song carries them too (a title id shared by
+        cover versions), its name has the recorded name's match key as well.
+        With none recorded, the name alone decides."""
         raw = self.songs[link.song]
-        return (match_key(raw.artist), match_key(raw.title)) == link.key()
+        name_matches = (match_key(raw.artist), match_key(raw.title)) == link.key()
+        if not link.source_ids:
+            return name_matches
+        live = self.source_ids.get(link.song, {})
+        if not all(live.get(k) == v for k, v in link.source_ids.items()):
+            return False
+        return name_matches or len(self.by_source_ids(link.source_ids)) == 1
+
+    def name_key(self, sid: str) -> tuple[str, str]:
+        raw = self.songs[sid]
+        return (match_key(raw.artist), match_key(raw.title))
 
 
 def bind_links(
     catalog: Catalog, datasets: list[HitlistData], log: logging.Logger
 ) -> BindReport:
     """Check every link against the live data; re-bind in place where exactly
-    one live raw song carries the recorded source ids, else exactly one has
-    the recorded name's match key. Two candidates at a step is dangling. A
-    cited id that now holds another song (ids re-minted from scratch) is
-    re-bound like a missing one, never kept."""
+    one live raw song carries the recorded source ids (several are narrowed by
+    the recorded name's match key), else exactly one has the recorded name's
+    match key. Two candidates at a step is dangling, and so is a candidate the
+    same catalog song already links. A cited id that now holds another song
+    (ids re-minted from scratch) is re-bound like a missing one, never kept."""
     live = {data.chart: _LiveChart(data) for data in datasets}
     report = BindReport()
     for sid, song in catalog.songs.items():
@@ -393,12 +411,25 @@ def bind_links(
                 states.append(LinkState(sid, link, "bound"))
                 continue
             found = chart.by_source_ids(link.source_ids) if link.source_ids else []
-            if not found:
+            if len(found) > 1:
+                found = [c for c in found if chart.name_key(c) == link.key()]
+            elif not found:
                 found = chart.by_key.get(link.key(), [])
             if len(found) != 1:
                 states.append(LinkState(sid, link, "dangling"))
                 continue
             previous, new_id = link.song, found[0]
+            if any(
+                (other.chart, other.song) == (link.chart, new_id)
+                for other in song.links
+                if other is not link
+            ):
+                log.info(
+                    f"catalog: song {sid} link {link.chart} {previous} left "
+                    f"dangling: {new_id} is already linked by this song"
+                )
+                states.append(LinkState(sid, link, "dangling"))
+                continue
             raw = chart.songs[new_id]
             link.song = new_id
             link.artist, link.title = raw.artist, raw.title

@@ -124,6 +124,14 @@ class TestModel:
         b = CatalogSong("2", "B", "U", links=[Link("c", "9", "A / B", "T ; U")])
         Catalog({"1": a, "2": b}, Path("mem"))  # no error
 
+    def test_an_alias_that_normalizes_to_nothing_claims_no_key(self):
+        a = CatalogSong("1", "A", "T", [Alias("Nena", "?")], [Link("c", "1", "A", "T")])
+        b = CatalogSong(
+            "2", "B", "U", [Alias("Nena", "...")], [Link("c", "2", "B", "U")]
+        )
+        catalog = Catalog({"1": a, "2": b}, Path("mem"))  # no ValueError
+        assert catalog.alias_owner(("nena", "")) is None
+
 
 class TestRead:
     def test_missing_file_is_an_empty_catalog(self, tmp_path):
@@ -321,10 +329,30 @@ class TestWrite:
             raise OSError("disk full")
 
         monkeypatch.setattr(os, "replace", boom)
-        with pytest.raises(OSError):
+        with pytest.raises(
+            CatalogError, match="cannot write .*catalog.json: disk full"
+        ):
             write_catalog_file(catalog, catalog.source, log)
         assert catalog.source.read_bytes() == before
         assert not list(tmp_path.glob("*.tmp"))
+
+    def test_an_unwritable_directory_is_a_catalog_error(self, tmp_path, monkeypatch):
+        catalog = self._catalog(tmp_path)
+
+        def boom(*args, **kwargs):
+            raise PermissionError("denied")
+
+        monkeypatch.setattr("tempfile.mkstemp", boom)
+        with pytest.raises(CatalogError, match="cannot write .*denied"):
+            write_catalog_file(catalog, catalog.source, log)
+        assert not catalog.source.exists()
+
+    def test_write_refuses_a_malformed_existing_catalog(self, tmp_path):
+        path = tmp_path / "catalog.json"
+        path.write_text("{not json", encoding="utf-8")
+        with pytest.raises(CatalogError, match="catalog.json"):
+            write_catalog_file(self._catalog(tmp_path), path, log)
+        assert path.read_text(encoding="utf-8") == "{not json"
 
 
 def _data(chart, songs, editions):
@@ -492,6 +520,105 @@ class TestBind:
         )
         link = Link("top40", "7", "The Bangles", "Eternal Flame")
         report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+
+    def test_rebind_never_lands_on_an_id_the_song_already_links(self, tmp_path, caplog):
+        # Song links Top 2000 raw songs 10 and 11, both named Hello Josephine;
+        # only 11 is live. Re-binding 10 by name would give the song a second
+        # link to 11, which the file format forbids: leave 10 dangling.
+        live = Song("11", "The Scorpions", "Hello Josephine")
+        data = _data(
+            "top2000", [live], [Edition({"year": 2023}, 2000, [Entry(1, [live])])]
+        )
+        ten = Link("top2000", "10", "Scorpions", "Hello Josephine")
+        eleven = Link("top2000", "11", "The Scorpions", "Hello Josephine")
+        catalog = self._catalog(ten, eleven)
+        with caplog.at_level(logging.INFO):
+            report = bind_links(catalog, [data], log)
+        assert [s.state for s in report.states["1"]] == ["dangling", "bound"]
+        assert (ten.song, eleven.song) == ("10", "11")  # untouched, none dropped
+        assert "already linked by this song" in caplog.text
+        assert not report.changed
+        index = CatalogIndex.from_datasets([data], catalog, log)
+        assert check_catalog(index, catalog).problems == 1
+        target = tmp_path / "catalog.json"
+        write_catalog_file(catalog, target, log)  # no "links ... twice" error
+        assert len(read_catalog(target, log).songs["1"].links) == 2
+
+    def test_rebind_sees_ids_re_bound_earlier_in_the_same_pass(self):
+        # Link 10 re-binds to 11 by name; link 12 would also land on 11, but
+        # the song now links it, so 12 stays dangling.
+        live = Song("11", "Scorpions", "Hello Josephine")
+        data = _data(
+            "top2000", [live], [Edition({"year": 2023}, 2000, [Entry(1, [live])])]
+        )
+        ten = Link("top2000", "10", "Scorpions", "Hello Josephine")
+        twelve = Link("top2000", "12", "The Scorpions", "Hello Josephine")
+        report = bind_links(self._catalog(ten, twelve), [data], log)
+        assert [s.state for s in report.states["1"]] == ["rebound", "dangling"]
+        assert (ten.song, twelve.song) == ("11", "12")
+
+    def _cover_bundle(self):
+        # top40.nl's title id bundles covers sharing a position: two raw songs
+        # carry title id 4493.
+        nini = Song("1", "Nini Rosso", "Il Silenzio")
+        dalida = Song("2", "Dalida", "Il Silenzio")
+        return _data(
+            "top40",
+            [nini, dalida],
+            [
+                _week(1965, 1, (1, [nini], {"top40.nl/title": "4493"})),
+                _week(1965, 2, (1, [dalida], {"top40.nl/title": "4493"})),
+            ],
+        )
+
+    def test_a_shared_title_id_is_not_bound_when_the_name_differs(self):
+        # The link recorded Nini Rosso, but its id now cites Dalida: the ids
+        # agree, the name does not, so it re-binds to the Nini Rosso song.
+        link = Link(
+            "top40", "2", "Nini Rosso", "Il Silenzio", {"top40.nl/title": "4493"}
+        )
+        report = bind_links(self._catalog(link), [self._cover_bundle()], log)
+        (state,) = report.all()
+        assert (state.state, state.previous, link.song) == ("rebound", "2", "1")
+        assert link.artist == "Nini Rosso"
+
+    def test_a_shared_title_id_is_bound_when_the_name_agrees(self):
+        nini = Link(
+            "top40", "1", "Nini Rosso", "Il Silenzio", {"top40.nl/title": "4493"}
+        )
+        dalida = Link("top40", "2", "Dalida", "Il Silenzio", {"top40.nl/title": "4493"})
+        catalog = Catalog(
+            {
+                "1": CatalogSong("1", "Nini Rosso", "Il Silenzio", links=[nini]),
+                "2": CatalogSong("2", "Dalida", "Il Silenzio", links=[dalida]),
+            },
+            Path("mem"),
+        )
+        report = bind_links(catalog, [self._cover_bundle()], log)
+        assert [s.state for s in report.all()] == ["bound", "bound"]
+
+    def test_a_shared_title_id_with_two_name_matches_is_dangling(self):
+        a = Song("1", "Nini Rosso", "Il Silenzio")
+        b = Song("2", "The Nini Rosso", "Il Silenzio")
+        data = _data(
+            "top40",
+            [a, b],
+            [
+                _week(1965, 1, (1, [a], {"top40.nl/title": "4493"})),
+                _week(1965, 2, (1, [b], {"top40.nl/title": "4493"})),
+            ],
+        )
+        link = Link(
+            "top40", "7", "Nini Rosso", "Il Silenzio", {"top40.nl/title": "4493"}
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+        assert link.song == "7"
+
+    def test_a_shared_title_id_with_no_name_match_is_dangling(self):
+        link = Link("top40", "7", "Il Divo", "Il Silenzio", {"top40.nl/title": "4493"})
+        report = bind_links(self._catalog(link), [self._cover_bundle()], log)
         assert [s.state for s in report.all()] == ["dangling"]
 
     def test_chart_not_in_datasets_is_dangling(self):

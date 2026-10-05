@@ -215,11 +215,12 @@ songs that carry a decision; everything else matches as described under
 
 A catalog song has a display name, `aliases` (spellings that resolve to it,
 matched like `chartsgen` matches), and `links`: the raw songs, per chart,
-whose chart positions are its own. A link records the raw song's id, name
-and source ids as they were when the link was made, the source ids being
-the ones every entry citing the raw song agrees on, key by key. Several links under one
-song merge spellings and charts into one history; the same raw song linked
-from two songs is a split (a double A-side crediting both).
+whose chart positions are its own. A link records the raw song's id, name and
+source ids as they were when the link was made. For source ids, that means the
+keys on which every entry citing the raw song agrees, with their values.
+Several links under one song merge spellings and charts into one history; the
+same raw song linked from two songs is a split (a double A-side crediting
+both).
 
 ```json
 {
@@ -251,19 +252,23 @@ history is the union over its links, so a track spelled like the Top 40's
 entry still gets the Top 2000's positions once the two are linked.
 `chartsgen` does not consult the catalog yet
 ([#165](https://github.com/pvliesdonk/beets-hitlisttag/issues/165)); today
-the catalog is read by `chartscatalog check` and its lookup index only.
+only `chartscatalog check` reads it.
 
 **After a re-acquisition.** A link points at a raw id; a forced or
 from-scratch re-acquisition can re-mint ids or respell names. On every use
-the plugin checks each link against the live data: it is *bound* when its id
-is still cited by an edition and still holds the recorded song (its source
-ids agree, or, without any, its name does); otherwise it is *re-bound* when exactly one
-live raw song carries the recorded source ids, or, failing that, exactly one
-has the recorded name; otherwise it is *dangling* and contributes nothing
-until you re-link it. Two candidates never count as a match. So Top 40 and
-Top 100 links survive even a from-scratch re-acquisition through top40.nl's
-title ids; a Top 2000 link survives while Wikipedia's spelling matches, and
-a respelled Top 2000 song shows up as dangling.
+the plugin checks each link against the live data. A link is *bound* when its
+id is still cited by an edition and still holds the recorded song: its source
+ids agree (and, where several raw songs share those ids, its name does too),
+or, without any source ids, its name agrees. Otherwise it is *re-bound* when
+exactly one live raw song carries the recorded source ids (the recorded name
+decides between several), or, failing that, exactly one has the recorded name.
+Otherwise it is *dangling* and contributes nothing until you re-link it. Two
+candidates never count as a match, and a link never re-binds onto a raw song
+the same catalog song already links; it stays dangling. So Top 40 and Top 100
+links survive even a from-scratch re-acquisition through top40.nl's title ids,
+and where a title id names several raw songs (a cover bundle) the recorded
+name decides between them. A Top 2000 link survives while Wikipedia's
+spelling matches, and a respelled Top 2000 song shows up as dangling.
 
 ```
 beet chartscatalog check
@@ -599,7 +604,8 @@ hitlisttag:
   dataset_dir: ~/charts
 ```
 
-The song catalog lives at `dataset_dir/catalog.json`; `catalog` is a reserved hitlist name.
+The song catalog lives at `dataset_dir/catalog.json`; `catalog` is a reserved
+hitlist name.
 
 Ingestor scripts of your own are read from `ingestor_dir`, which
 defaults to `ingestors` under the beets configuration directory (for

@@ -156,6 +156,51 @@ class TestCheck:
             "(recorded: The Scorpions ((GBR)) - Hello Josephine)" in out
         )
 
+    def test_a_rebind_onto_an_already_linked_id_is_dangling_not_an_error(
+        self, env, capsys
+    ):
+        _dataset(
+            env,
+            "top2000",
+            {"11": {"artist": "The Scorpions", "title": "Hello Josephine"}},
+            [
+                {
+                    "axes": {"year": 2023},
+                    "size": 2000,
+                    "entries": [{"position": 1, "songs": ["11"]}],
+                }
+            ],
+        )
+        links = [
+            {
+                "chart": "top2000",
+                "song": song,
+                "artist": artist,
+                "title": "Hello Josephine",
+            }
+            for song, artist in (("10", "Scorpions"), ("11", "The Scorpions"))
+        ]
+        _write(
+            env.data / "catalog.json",
+            {
+                "catalog": 1,
+                "songs": {
+                    "1": {
+                        "artist": "Scorpions",
+                        "title": "Hello Josephine",
+                        "aliases": [],
+                        "links": links,
+                    }
+                },
+            },
+        )
+        path = env.data / "catalog.json"
+        before = path.read_bytes()
+        with pytest.raises(ui.UserError, match="1 dangling link"):
+            _run(env, "check")
+        assert "links: 1 bound, 0 re-bound, 1 dangling" in capsys.readouterr().out
+        assert path.read_bytes() == before
+
     def test_implicit_pair_exits_one(self, env, capsys):
         _dataset(
             env,
