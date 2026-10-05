@@ -17,13 +17,16 @@ from beetsplug.hitlisttag.catalog import (
     CatalogError,
     CatalogIndex,
     CatalogSong,
+    CheckResult,
     ImplicitPair,
     Link,
     LinkState,
     bind_links,
     catalog_path,
+    check_catalog,
     dump_catalog,
     read_catalog,
+    stray_catalog_files,
     write_catalog_file,
 )
 from beetsplug.hitlisttag.dataset import (
@@ -987,3 +990,96 @@ class TestDurability:
             ("top2000", "bound"),
             ("top2000", "dangling"),
         }
+
+
+class TestCheck:
+    def test_report_lines_counts_rebound_dangling_and_pairs(self, tmp_path):
+        s40 = Song("9", "Scorpions ((GBR))", "Hello Josephine")
+        b40 = Song("5", "Bangles", "Eternal Flame")
+        top40 = _data(
+            "top40",
+            [s40, b40],
+            [_week(1965, 1, (1, [s40], {"top40.nl/title": "75"}), (2, [b40], {}))],
+        )
+        b100 = Song("3", "The Bangles", "Eternal Flame")
+        top100 = _data(
+            "top100", [b100], [Edition({"year": 1989}, 100, [Entry(4, [b100])])]
+        )
+        catalog = Catalog(
+            {
+                "1": CatalogSong(
+                    "1",
+                    "Scorpions",
+                    "Hello Josephine",
+                    [Alias("Scorpions", "Hello Josephine")],
+                    [
+                        Link(
+                            "top40",
+                            "1",
+                            "The Scorpions ((GBR))",
+                            "Hello Josephine",
+                            {"top40.nl/title": "75"},
+                        ),
+                        Link("top2000", "77", "Scorpions", "Hello Josephine"),
+                    ],
+                ),
+                "2": CatalogSong(
+                    "2",
+                    "Bangles",
+                    "Eternal Flame",
+                    links=[Link("top40", "5", "Bangles", "Eternal Flame")],
+                ),
+                "3": CatalogSong(
+                    "3",
+                    "The Bangles",
+                    "Eternal Flame",
+                    links=[Link("top100", "3", "The Bangles", "Eternal Flame")],
+                ),
+            },
+            tmp_path / "catalog.json",
+        )
+        index = CatalogIndex.from_datasets([top40, top100], catalog, log)
+        result = check_catalog(index, catalog)
+        assert result.lines == [
+            "catalog: 3 songs, 1 alias, 4 links",
+            "links: 2 bound, 1 re-bound, 1 dangling",
+            "re-bound: song 1 (Scorpions - Hello Josephine) top40 1 -> 9",
+            "dangling: song 1 (Scorpions - Hello Josephine) top2000 77 "
+            "(recorded: Scorpions - Hello Josephine)",
+            "implicit alias pair: top100 3 and top40 5 (The Bangles - Eternal Flame) "
+            "link different songs",
+        ]
+        assert result.problems == 2
+        assert result.changed
+
+    def test_clean_report(self, tmp_path):
+        raw = Song("1", "A", "T")
+        data = _data("top40", [raw], [_week(1965, 1, (1, [raw], {}))])
+        catalog = Catalog(
+            {"1": CatalogSong("1", "A", "T", links=[Link("top40", "1", "A", "T")])},
+            tmp_path / "catalog.json",
+        )
+        result = check_catalog(
+            CatalogIndex.from_datasets([data], catalog, log), catalog
+        )
+        assert result == CheckResult(
+            [
+                "catalog: 1 song, 0 aliases, 1 link",
+                "links: 1 bound, 0 re-bound, 0 dangling",
+            ],
+            0,
+            False,
+        )
+
+    def test_stray_catalog_files(self, tmp_path):
+        (tmp_path / "catalog.json").write_text(
+            '{"catalog": 1, "songs": {}}', encoding="utf-8"
+        )
+        sub = tmp_path / "old"
+        sub.mkdir()
+        (sub / "catalog.json").write_text(
+            '{"catalog": 1, "songs": {}}', encoding="utf-8"
+        )
+        (sub / "top40.json").write_text('{"chart": "top40"}', encoding="utf-8")
+        (sub / "broken.json").write_text("{", encoding="utf-8")
+        assert stray_catalog_files(tmp_path, log) == [sub / "catalog.json"]

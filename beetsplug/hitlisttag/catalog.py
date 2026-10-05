@@ -23,7 +23,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .dataset import HitlistData, _id_sort_key
+from .dataset import HitlistData, _id_sort_key, _iter_json_files
 from .lookup import LookupResult, Placement, SongLookupIndex, match_key
 
 FORMAT_VERSION = 1
@@ -523,3 +523,72 @@ class CatalogIndex:
             ambiguous_charts=set(),
             unbound_charts=unbound,
         )
+
+
+def _count(n: int, word: str, plural: str | None = None) -> str:
+    return f"{n} {word if n == 1 else (plural or word + 's')}"
+
+
+@dataclass
+class CheckResult:
+    lines: list[str]
+    problems: int
+    changed: bool
+
+
+def check_catalog(index: CatalogIndex, catalog: Catalog) -> CheckResult:
+    """The ``chartscatalog check`` report over an index built from ``catalog``.
+
+    ``problems`` counts dangling links and implicit alias pairs; ``changed``
+    says a re-bind altered a link, so the caller writes the catalog back.
+    """
+    report = index.bind_report
+    bound = report.with_state("bound")
+    rebound = report.with_state("rebound")
+    dangling = report.with_state("dangling")
+    songs = catalog.songs.values()
+    aliases = sum(len(s.aliases) for s in songs)
+    links = sum(len(s.links) for s in songs)
+    lines = [
+        f"catalog: {_count(len(catalog.songs), 'song')}, "
+        f"{_count(aliases, 'alias', 'aliases')}, {_count(links, 'link')}",
+        f"links: {len(bound)} bound, {len(rebound)} re-bound, {len(dangling)} dangling",
+    ]
+    for state in rebound:
+        song = catalog.songs[state.song_id]
+        lines.append(
+            f"re-bound: song {state.song_id} ({song.artist} - {song.title}) "
+            f"{state.link.chart} {state.previous} -> {state.link.song}"
+        )
+    for state in dangling:
+        song = catalog.songs[state.song_id]
+        lines.append(
+            f"dangling: song {state.song_id} ({song.artist} - {song.title}) "
+            f"{state.link.chart} {state.link.song} "
+            f"(recorded: {state.link.artist} - {state.link.title})"
+        )
+    for pair in index.implicit_pairs:
+        raws = " and ".join(f"{chart} {rid}" for chart, rid in pair.raws)
+        lines.append(
+            f"implicit alias pair: {raws} ({pair.artist} - {pair.title}) "
+            f"link different songs"
+        )
+    return CheckResult(lines, len(dangling) + len(index.implicit_pairs), bool(rebound))
+
+
+def stray_catalog_files(dataset_dir: Path | str, log: logging.Logger) -> list[Path]:
+    """Catalog-shaped ``*.json`` files under ``dataset_dir`` other than the one
+    at the reserved path; the reader skips them, so they are never used."""
+    dataset_dir = Path(dataset_dir)
+    reserved = catalog_path(dataset_dir).resolve()
+    strays: list[Path] = []
+    for path in _iter_json_files(dataset_dir, log):
+        if path.resolve() == reserved:
+            continue
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue  # the dataset reader reports unreadable files
+        if isinstance(raw, dict) and "catalog" in raw and "chart" not in raw:
+            strays.append(path)
+    return strays
