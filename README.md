@@ -216,7 +216,8 @@ songs that carry a decision; everything else matches as described under
 A catalog song has a display name, `aliases` (spellings that resolve to it,
 matched like `chartsgen` matches), and `links`: the raw songs, per chart,
 whose chart positions are its own. A link records the raw song's id, name
-and source ids as they were when the link was made. Several links under one
+and source ids as they were when the link was made, the source ids being
+the ones every entry citing the raw song agrees on, key by key. Several links under one
 song merge spellings and charts into one history; the same raw song linked
 from two songs is a split (a double A-side crediting both).
 

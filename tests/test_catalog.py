@@ -501,8 +501,8 @@ class TestBind:
         assert [s.state for s in report.all()] == ["dangling"]
 
     def test_differing_ids_across_entries_record_none(self):
-        # A raw song whose entries carry different ids has no usable ids, so
-        # a recorded id matches nothing and the name step decides.
+        # A raw song whose entries disagree on every id key has no usable
+        # ids, so a recorded id matches nothing and the name step decides.
         new = Song("9", "Scorpions", "Hello Josephine")
         data = _data(
             "top40",
@@ -519,6 +519,58 @@ class TestBind:
         (state,) = report.all()
         assert state.state == "rebound"
         assert link.source_ids == {}
+
+    def test_ids_agreeing_on_one_key_keep_that_key(self):
+        # Entries differing only on the subtitle id still agree on the title
+        # id, which is what a link records and what binds it.
+        raw = Song("75", "The Scorpions ((GBR))", "Hello Josephine")
+        data = _data(
+            "top40",
+            [raw],
+            [
+                _week(
+                    1965,
+                    1,
+                    (
+                        1,
+                        [raw],
+                        {"top40.nl/title": "3065", "top40.nl/subtitle": "38149"},
+                    ),
+                ),
+                _week(
+                    1965,
+                    2,
+                    (
+                        1,
+                        [raw],
+                        {"top40.nl/title": "3065", "top40.nl/subtitle": "38150"},
+                    ),
+                ),
+            ],
+        )
+        bound = Link(
+            "top40",
+            "75",
+            "The Scorpions ((GBR))",
+            "Hello Josephine",
+            {"top40.nl/title": "3065"},
+        )
+        report = bind_links(self._catalog(bound), [data], log)
+        (state,) = report.all()
+        assert state.state == "bound"
+        assert bound.source_ids == {"top40.nl/title": "3065"}
+        stale = Link(
+            "top40",
+            "5",
+            "The Scorpions ((GBR))",
+            "Hello Josephine",
+            {"top40.nl/title": "3065"},
+        )
+        report = bind_links(self._catalog(stale), [data], log)
+        (state,) = report.all()
+        assert state.state == "rebound"
+        assert stale.song == "75"
+        assert stale.source_ids == {"top40.nl/title": "3065"}
 
     def test_report_groups_states_by_song(self):
         raw = Song("5", "A", "T")

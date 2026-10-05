@@ -326,24 +326,28 @@ class BindReport:
 
 class _LiveChart:
     """What binding needs from one chart's live data: which raw songs an
-    edition cites, their source ids (when every citing entry agrees) and
-    their names by match key."""
+    edition cites, their source ids (the keys, with their values, on which
+    every citing entry agrees) and their
+    names by match key."""
 
     def __init__(self, data: HitlistData):
         self.songs = data.songs
         self.cited: set[str] = set()
-        ids: dict[str, dict[str, str] | None] = {}
+        entry_ids: dict[str, list[dict[str, str]]] = {}
         for edition in data.editions:
             for entry in edition.entries:
                 for song in entry.songs:
                     self.cited.add(song.id)
-                    if song.id not in ids:
-                        ids[song.id] = dict(entry.source_ids)
-                    elif ids[song.id] != entry.source_ids:
-                        ids[song.id] = None
-        self.source_ids: dict[str, dict[str, str]] = {
-            sid: mapping for sid, mapping in ids.items() if mapping
-        }
+                    entry_ids.setdefault(song.id, []).append(entry.source_ids)
+        self.source_ids: dict[str, dict[str, str]] = {}
+        for sid, mappings in entry_ids.items():
+            agreed = {
+                key: value
+                for key, value in mappings[0].items()
+                if all(other.get(key) == value for other in mappings[1:])
+            }
+            if agreed:
+                self.source_ids[sid] = agreed
         self.by_key: dict[tuple[str, str], list[str]] = {}
         for sid in sorted(self.cited, key=_id_sort_key):
             key = (match_key(self.songs[sid].artist), match_key(self.songs[sid].title))
