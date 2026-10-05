@@ -1001,6 +1001,14 @@ remain. `derived`.
   is fixed on the acquisition side first. The keying unknown is
   resolved (above). Two placements in one edition, possible once two
   songs that charted the same week are merged, are returned by the
-  index and left to #165 to represent in the tag. No change to direction.
+  index and left to #165 to represent in the tag. The method finding
+  held again: the real-data run of `check` found that entries of one
+  raw song agree on the title id while differing on a subtitle id, so
+  source-id agreement is per key; the whole-branch review found that a
+  re-bind could duplicate a link, that a title id shared by a cover
+  bundle needs the name to decide, and that a merged song drops charts
+  it has no link in — the first two fixed before merge, the last a
+  design question filed as #172 and blocking #165. No change to
+  direction.
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
