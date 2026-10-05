@@ -843,7 +843,11 @@ class TestDurability:
     V2_TOP40 = [
         _acquired(
             {"year": 1965, "week": 1},
-            ("Scorpions ((GBR))", "Hello Josephine", {"top40.nl/title": "75"}),
+            (
+                "Scorpions ((GBR)) & The Hurricanes",
+                "Hello Josephine",
+                {"top40.nl/title": "75"},
+            ),
             ("Nena", "99 Luftballons", {"top40.nl/title": "900"}),
         )
     ]
@@ -950,6 +954,18 @@ class TestDurability:
             ("top2000", "rebound"),
             ("top2000", "dangling"),
         }
+        # Verify the Top 40 Scorpions link re-bound by source_id: its
+        # artist changed to a different match_key, so only the carried id can
+        # re-bind it.
+        (scorpions_top40,) = [
+            s
+            for s in index.bind_report.all()
+            if s.link.chart == "top40" and s.state == "rebound"
+        ]
+        assert scorpions_top40.previous == "1"
+        assert scorpions_top40.link.song == "3"
+        assert scorpions_top40.link.source_ids == {"top40.nl/title": "75"}
+        assert scorpions_top40.link.artist == "Scorpions ((GBR)) & The Hurricanes"
 
     def test_survives_from_scratch_reacquisition(self, tmp_path):
         data_dir, _ = self._seed(tmp_path)
@@ -965,3 +981,9 @@ class TestDurability:
         catalog = read_catalog(catalog_path(data_dir), log)
         index = CatalogIndex.from_datasets(live, catalog, log)
         self._assert_v2(index)
+        states = {(s.link.chart, s.state) for s in index.bind_report.all()}
+        assert states == {
+            ("top40", "bound"),
+            ("top2000", "bound"),
+            ("top2000", "dangling"),
+        }
