@@ -478,6 +478,13 @@ class CatalogIndex:
     Order for a track's match key: an explicit alias; else the live name of
     a raw song that links to exactly one catalog song (an implicit alias);
     else the raw lookup.
+
+    A resolved catalog song's links decide the charts they name, a dangling
+    link included. Every other chart resolves by name over every name the
+    song knows (the track's spelling, the display name, the aliases, the
+    links' recorded names and their raw songs' live names), skipping raw
+    songs any catalog song links; several distinct raw songs matching in one
+    chart make that chart ambiguous.
     """
 
     def __init__(
@@ -491,6 +498,7 @@ class CatalogIndex:
         self._raw = raw
         self._catalog = catalog
         self._placements = placements
+        self._names = names
         self.bind_report = report
         linkers: dict[tuple[str, str], set[str]] = {}
         for sid, states in report.states.items():
@@ -499,6 +507,7 @@ class CatalogIndex:
                     linkers.setdefault((state.link.chart, state.link.song), set()).add(
                         sid
                     )
+        self._claimed = set(linkers)
         implicit: dict[tuple[str, str], tuple[set[str], list[tuple[str, str]]]] = {}
         for raw_id, sids in linkers.items():
             if len(sids) != 1 or raw_id not in names:
@@ -552,12 +561,65 @@ class CatalogIndex:
             placements.setdefault(link.chart, []).extend(
                 self._placements.get((link.chart, link.song), [])
             )
+        found = self._fallback(sid, {key})
+        ambiguous: set[str] = set()
+        for chart, songs in found.items():
+            if len(songs) == 1:
+                (chart_placements,) = songs.values()
+                placements[chart] = list(chart_placements)
+            else:
+                ambiguous.add(chart)
         return LookupResult(
             normalized=key,
             placements=placements,
-            ambiguous_charts=set(),
+            ambiguous_charts=ambiguous,
             unbound_charts=unbound,
         )
+
+    def _known_keys(self, sid: str) -> set[tuple[str, str]]:
+        """Every name catalog song ``sid`` knows, as match keys."""
+        song = self._catalog.songs[sid]
+        names = [(song.artist, song.title)]
+        names += [(alias.artist, alias.title) for alias in song.aliases]
+        for state in self.bind_report.states.get(sid, []):
+            names.append((state.link.artist, state.link.title))
+            live = self._names.get((state.link.chart, state.link.song))
+            if state.state != "dangling" and live is not None:
+                names.append(live)
+        keys = {(match_key(artist), match_key(title)) for artist, title in names}
+        return {key for key in keys if key[0] and key[1]}
+
+    def _fallback(
+        self, sid: str, extra: set[tuple[str, str]]
+    ) -> dict[str, dict[str, list[Placement]]]:
+        """Raw songs matching catalog song ``sid`` by name in the charts it
+        does not link: chart -> raw song id -> placements. Raw songs any
+        catalog song links are skipped."""
+        linked = {state.link.chart for state in self.bind_report.states.get(sid, [])}
+        found: dict[str, dict[str, list[Placement]]] = {}
+        for key in self._known_keys(sid) | extra:
+            for chart, songs in self._raw.songs_for(key).items():
+                if chart in linked:
+                    continue
+                for raw_id, chart_placements in songs.items():
+                    if (chart, raw_id) not in self._claimed:
+                        found.setdefault(chart, {})[raw_id] = chart_placements
+        return found
+
+    def ambiguous_fallbacks(self) -> list[tuple[str, str, list[tuple[str, str, str]]]]:
+        """Catalog songs whose own names match several raw songs in a chart
+        they do not link: (song id, chart, [(raw id, artist, title)]), by song
+        id, then chart, then raw id."""
+        out = []
+        for sid in sorted(self._catalog.songs, key=_id_sort_key):
+            for chart, songs in sorted(self._fallback(sid, set()).items()):
+                if len(songs) > 1:
+                    raws = [
+                        (raw_id, *self._names[(chart, raw_id)])
+                        for raw_id in sorted(songs, key=_id_sort_key)
+                    ]
+                    out.append((sid, chart, raws))
+        return out
 
 
 def _count(n: int, word: str, plural: str | None = None) -> str:
@@ -607,6 +669,14 @@ def check_catalog(index: CatalogIndex, catalog: Catalog) -> CheckResult:
         lines.append(
             f"implicit alias pair: {raws} ({pair.artist} - {pair.title}) "
             f"link different songs"
+        )
+    # Information only: these resolve as ambiguous, as the plain lookup would.
+    for sid, chart, raws in index.ambiguous_fallbacks():
+        song = catalog.songs[sid]
+        found = ", ".join(f"{rid} ({artist} - {title})" for rid, artist, title in raws)
+        lines.append(
+            f"ambiguous fallback: song {sid} ({song.artist} - {song.title}) "
+            f"{chart}: {found}"
         )
     return CheckResult(lines, len(dangling) + len(index.implicit_pairs), bool(rebound))
 

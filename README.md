@@ -248,8 +248,16 @@ take the catalog's path.
 
 A track resolves in this order: an alias it spells; else the name of a raw
 song that links to exactly one catalog song; else the plain match. A song's
-history is the union over its links, so a track spelled like the Top 40's
-entry still gets the Top 2000's positions once the two are linked.
+links decide the charts they name, so a track spelled like the Top 40's
+entry still gets the Top 2000's positions once the two are linked. Every
+chart a song has no link in resolves by name, over every name the catalog
+knows for it (the track's spelling, the display name, the aliases and the
+linked spellings), skipping raw songs another catalog song links. Merging
+two Top 40 spellings therefore keeps the song's Top 2000 history, and a
+song's first entry in a chart you never linked is still found. If its
+names match several raw songs in such a chart, that chart is ambiguous, as
+in the plain match. A chart whose only link is dangling stays unresolved
+until you re-link it.
 `chartsgen` does not consult the catalog yet
 ([#165](https://github.com/pvliesdonk/beets-hitlisttag/issues/165)); today
 only `chartscatalog check` reads it.
@@ -276,8 +284,10 @@ beet chartscatalog check
 
 prints the counts and every re-bound and dangling link, writes re-bound
 links back, and exits 1 when a link is dangling or when two raw songs with
-one name link different catalog songs (a merge you may want). A missing
-catalog is an empty one.
+one name link different catalog songs (a merge you may want). It also lists,
+for information, every song whose names match several raw songs in a chart
+it has no link in; linking the right one settles it. A missing catalog is
+an empty one.
 
 ## Usage
 

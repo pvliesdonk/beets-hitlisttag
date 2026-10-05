@@ -971,6 +971,219 @@ class TestResolve:
         assert index.bind_report.all() == []
 
 
+class TestFallback:
+    """#179: links decide the charts they name; every other chart resolves by
+    name, over every name the song knows, skipping raw songs another catalog
+    song links."""
+
+    SG = ("Simon & Garfunkel", "The Sound of Silence")
+
+    def _top40(self):
+        # Two spellings with one match key: the plain lookup calls them
+        # ambiguous until they are merged.
+        a = Song("1", "Simon & Garfunkel", "The Sound of Silence")
+        b = Song("2", "Simon and Garfunkel", "The Sound Of Silence")
+        return _data(
+            "top40",
+            [a, b],
+            [_week(1966, 1, (3, [a], {})), _week(1966, 2, (5, [b], {}))],
+        )
+
+    def _top2000(self, *songs):
+        songs = songs or (Song("7", *self.SG),)
+        return _data(
+            "top2000",
+            list(songs),
+            [
+                Edition(
+                    {"year": 2023},
+                    2000,
+                    [Entry(40 + i, [s]) for i, s in enumerate(songs)],
+                )
+            ],
+        )
+
+    def _merged(self, *extra_links, aliases=()):
+        song = CatalogSong(
+            "1",
+            *self.SG,
+            list(aliases),
+            [
+                Link("top40", "1", "Simon & Garfunkel", "The Sound of Silence"),
+                Link("top40", "2", "Simon and Garfunkel", "The Sound Of Silence"),
+                *extra_links,
+            ],
+        )
+        return Catalog({"1": song}, Path("mem"))
+
+    def test_merging_spellings_keeps_the_other_charts_history(self):
+        # The #172 scenario.
+        datasets = [self._top40(), self._top2000()]
+        before = CatalogIndex.from_datasets(datasets, Catalog({}, Path("mem")), log)
+        assert before.lookup(*self.SG).ambiguous_charts == {"top40"}
+
+        index = CatalogIndex.from_datasets(datasets, self._merged(), log)
+        result = index.lookup(*self.SG)
+        assert result.placements == {
+            "top40": [
+                Placement({"year": 1966, "week": 1}, 3, 40),
+                Placement({"year": 1966, "week": 2}, 5, 40),
+            ],
+            "top2000": [Placement({"year": 2023}, 40, 2000)],
+        }
+        assert result.ambiguous_charts == set()
+        assert result.unbound_charts == set()
+
+    def test_a_chart_that_appears_later_is_picked_up(self):
+        catalog = self._merged()
+        early = CatalogIndex.from_datasets([self._top40()], catalog, log)
+        assert set(early.lookup(*self.SG).placements) == {"top40"}
+        later = CatalogIndex.from_datasets(
+            [self._top40(), self._top2000()], self._merged(), log
+        )
+        assert set(later.lookup(*self.SG).placements) == {"top40", "top2000"}
+
+    def test_every_name_the_song_knows_is_tried(self):
+        # The track spells it "Sounds"; only the display name reaches the
+        # Top 2000's "Sound".
+        sounds = Song("3", "Simon and Garfunkel", "The Sounds of Silence")
+        top40 = _data("top40", [sounds], [_week(1966, 1, (3, [sounds], {}))])
+        song = CatalogSong(
+            "1",
+            *self.SG,
+            links=[Link("top40", "3", "Simon and Garfunkel", "The Sounds of Silence")],
+        )
+        index = CatalogIndex.from_datasets(
+            [top40, self._top2000()], Catalog({"1": song}, Path("mem")), log
+        )
+        assert CatalogIndex.from_datasets(
+            [top40, self._top2000()], Catalog({}, Path("mem")), log
+        ).lookup("Simon and Garfunkel", "The Sounds of Silence").placements == {
+            "top40": [Placement({"year": 1966, "week": 1}, 3, 40)]
+        }
+        result = index.lookup("Simon and Garfunkel", "The Sounds of Silence")
+        assert result.placements["top2000"] == [Placement({"year": 2023}, 40, 2000)]
+
+    def test_a_raw_song_another_catalog_song_links_is_skipped(self):
+        # The explicit alias reaches song 1; the cover's raw name alone would
+        # cancel with song 1's as an implicit pair.
+        catalog = self._merged(aliases=[Alias(*self.SG)])
+        cover = CatalogSong(
+            "2",
+            "Simon & Garfunkel",
+            "The Sound of Silence (cover)",
+            links=[Link("top2000", "7", *self.SG)],
+        )
+        catalog = Catalog({**catalog.songs, "2": cover}, Path("mem"))
+        index = CatalogIndex.from_datasets(
+            [self._top40(), self._top2000()], catalog, log
+        )
+        result = index.lookup(*self.SG)
+        assert set(result.placements) == {"top40"}
+        assert result.ambiguous_charts == set()
+
+    def test_two_names_matching_two_raw_songs_is_ambiguous(self):
+        top2000 = self._top2000(
+            Song("7", *self.SG), Song("9", "Paul Simon", "The Sound of Silence")
+        )
+        catalog = self._merged(aliases=[Alias("Paul Simon", "The Sound of Silence")])
+        index = CatalogIndex.from_datasets([self._top40(), top2000], catalog, log)
+        result = index.lookup(*self.SG)
+        assert set(result.placements) == {"top40"}
+        assert result.ambiguous_charts == {"top2000"}
+
+    def test_a_chart_with_only_a_dangling_link_gets_no_fallback(self):
+        gone = Link("top2000", "77", "Simon & Garfunkel", "The Sound of Silence (live)")
+        index = CatalogIndex.from_datasets(
+            [self._top40(), self._top2000()], self._merged(gone), log
+        )
+        result = index.lookup(*self.SG)
+        assert set(result.placements) == {"top40"}
+        assert result.unbound_charts == {"top2000"}
+
+    def _linked_by_ids(self, live_title, top2000_song):
+        """A song reached by its alias, linking Top 40 raw song 3 by title id;
+        the link recorded "Sounds of Silence", the live raw song may differ."""
+        live = Song("3", "Simon and Garfunkel", live_title)
+        top40 = _data(
+            "top40", [live], [_week(1966, 1, (3, [live], {"top40.nl/title": "9"}))]
+        )
+        song = CatalogSong(
+            "1",
+            "Simon & Garfunkel",
+            "The Sound of Silence (1965)",
+            [Alias("Simon & Garfunkel", "The Sound of Silence (1965)")],
+            [
+                Link(
+                    "top40",
+                    "3",
+                    "Simon and Garfunkel",
+                    "Sounds of Silence",
+                    {"top40.nl/title": "9"},
+                )
+            ],
+        )
+        catalog = Catalog({"1": song}, Path("mem"))
+        datasets = [top40, self._top2000(top2000_song)]
+        return CatalogIndex.from_datasets(datasets, catalog, log)
+
+    def test_a_links_recorded_name_reaches_an_unlinked_chart(self):
+        index = self._linked_by_ids(
+            "Sounds Of Silence (Mono)",
+            Song("8", "Simon and Garfunkel", "Sounds of Silence"),
+        )
+        result = index.lookup("Simon & Garfunkel", "The Sound of Silence (1965)")
+        assert result.placements["top2000"] == [Placement({"year": 2023}, 40, 2000)]
+
+    def test_a_links_live_name_reaches_an_unlinked_chart(self):
+        index = self._linked_by_ids(
+            "Sounds Of Silence (Mono)",
+            Song("8", "Simon and Garfunkel", "Sounds Of Silence (Mono)"),
+        )
+        result = index.lookup("Simon & Garfunkel", "The Sound of Silence (1965)")
+        assert result.placements["top2000"] == [Placement({"year": 2023}, 40, 2000)]
+
+    def test_a_dangling_links_live_name_is_not_tried(self):
+        # From scratch, Top 40 id 5 now holds another song: the link dangles,
+        # and that song's name must not pull its Top 2000 history in.
+        other = Song("5", "B", "U")
+        top40 = _data("top40", [other], [_week(1990, 1, (1, [other], {}))])
+        song = CatalogSong(
+            "1", "A", "T", [Alias("A", "T")], [Link("top40", "5", "A", "T")]
+        )
+        index = CatalogIndex.from_datasets(
+            [top40, self._top2000(Song("8", "B", "U"))],
+            Catalog({"1": song}, Path("mem")),
+            log,
+        )
+        result = index.lookup("A", "T")
+        assert "top2000" not in result.placements
+        assert result.ambiguous_charts == set()
+        assert result.unbound_charts == {"top40"}
+
+    def test_check_lists_ambiguous_fallbacks_without_counting_them(self):
+        top2000 = self._top2000(
+            Song("7", *self.SG), Song("9", "Paul Simon", "The Sound of Silence")
+        )
+        catalog = self._merged(aliases=[Alias("Paul Simon", "The Sound of Silence")])
+        index = CatalogIndex.from_datasets([self._top40(), top2000], catalog, log)
+        result = check_catalog(index, catalog)
+        assert (
+            "ambiguous fallback: song 1 (Simon & Garfunkel - The Sound of Silence) "
+            "top2000: 7 (Simon & Garfunkel - The Sound of Silence), "
+            "9 (Paul Simon - The Sound of Silence)"
+        ) in result.lines
+        assert result.problems == 0
+
+    def test_check_is_silent_about_unambiguous_fallbacks(self):
+        catalog = self._merged()
+        index = CatalogIndex.from_datasets(
+            [self._top40(), self._top2000()], catalog, log
+        )
+        lines = check_catalog(index, catalog).lines
+        assert not [line for line in lines if "fallback" in line]
+
+
 HITLISTS = {"top40": ["year", "week"], "top2000": ["year"]}
 
 
