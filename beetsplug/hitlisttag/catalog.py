@@ -80,8 +80,9 @@ class Link:
 
 @dataclass(frozen=True)
 class CatalogSong:
-    """A song's identity in the catalog. Immutable: ``aliases`` and ``links``
-    are stored as tuples (lists are accepted and converted)."""
+    """A song's identity in the catalog. Its name, aliases and set of links
+    can't change; ``aliases`` and ``links`` are stored as tuples (lists are
+    accepted and converted). A ``Link`` itself is the one in-place update."""
 
     id: str
     artist: str
@@ -105,10 +106,12 @@ class CatalogSong:
 
 @dataclass(frozen=True)
 class Catalog:
-    """The catalog's songs by id. Immutable: ``songs`` is a read-only view of
-    the catalog's own copy, and a change builds a new catalog through
-    ``with_song`` or ``without_song``, which re-run every check here, so the
-    alias index can never go stale."""
+    """The catalog's songs by id. Its songs and their aliases can't change:
+    ``songs`` is a read-only view of the catalog's own copy, and a change
+    builds a new catalog through ``with_song`` or ``without_song``, which
+    re-run every check here, so the alias index can never go stale. The new
+    catalog shares its song objects with the old one, so a ``Link`` updated
+    in place (see ``Link``) is updated in both."""
 
     songs: Mapping[str, CatalogSong]
     source: Path

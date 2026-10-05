@@ -148,6 +148,15 @@ class TestCopyOnChange:
             Path("mem"),
         )
 
+    def test_the_catalog_and_its_aliases_cannot_be_reassigned(self):
+        # Either would leave alias_owner answering from the old index.
+        catalog = self._catalog()
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            catalog.songs = {}  # type: ignore[misc]
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            catalog.songs["1"].aliases[0].artist = "x"  # type: ignore[misc]
+        assert catalog.alias_owner(("bangles", "ef")) == "1"
+
     def test_songs_cannot_be_assigned_into(self):
         catalog = self._catalog()
         with pytest.raises(TypeError):
