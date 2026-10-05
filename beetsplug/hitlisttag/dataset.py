@@ -22,9 +22,10 @@ JSON file per hitlist. Each file declares:
   songs; it is written only when non-empty.
 
 Files hold raw acquired data only: disposable and re-acquirable. Discovery is
-recursive; only lowercase ``*.json`` files are read; unreadable directories are
-warned about (or, with ``strict``, an error), and symlinked directories are not
-followed.
+recursive; only lowercase ``*.json`` files are read; a file whose top-level
+object has ``catalog`` and no ``chart`` is the song catalog (``catalog.py``)
+and is skipped; unreadable directories are warned about (or, with ``strict``,
+an error), and symlinked directories are not followed.
 """
 
 from __future__ import annotations
@@ -163,6 +164,15 @@ def _read_file(
         raise DatasetError(f"{path}: cannot read dataset file: {err}") from err
     if not isinstance(raw, dict):
         raise DatasetError(f"{path}: top-level value must be an object")
+
+    if "catalog" in raw:
+        if "chart" in raw:
+            raise DatasetError(
+                f"{path}: has both 'catalog' and 'chart'; a file is the song "
+                f"catalog or a chart's dataset, not both"
+            )
+        log.debug(f"{path}: song catalog file; not a dataset file")
+        return None
 
     chart = raw.get("chart")
     if not isinstance(chart, str):

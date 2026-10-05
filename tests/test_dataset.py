@@ -466,3 +466,26 @@ def test_unreadable_directory_message_without_strerror(tmp_path, monkeypatch, ca
         caplog.text
     )
     assert "None" not in caplog.text
+
+
+def test_catalog_file_is_skipped(tmp_path, caplog):
+    (tmp_path / "catalog.json").write_text(
+        json.dumps({"catalog": 1, "songs": {}}), encoding="utf-8"
+    )
+    (tmp_path / "top40.json").write_text(
+        json.dumps({"chart": "top40", "songs": {}, "editions": []}), encoding="utf-8"
+    )
+    with caplog.at_level(logging.WARNING):
+        result = read_dataset(tmp_path, HITLISTS, log)
+    assert [d.chart for d in result] == ["top40"]
+    assert "catalog" not in caplog.text  # skipped quietly, not warned about
+
+
+def test_file_with_both_catalog_and_chart_is_rejected(tmp_path):
+    path = tmp_path / "odd.json"
+    path.write_text(
+        json.dumps({"catalog": 1, "chart": "top40", "songs": {}, "editions": []}),
+        encoding="utf-8",
+    )
+    with pytest.raises(DatasetError, match="both 'catalog' and 'chart'"):
+        read_dataset(tmp_path, HITLISTS, log)
