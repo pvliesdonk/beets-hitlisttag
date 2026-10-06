@@ -451,11 +451,15 @@ entry crediting several songs is stored as those songs. The site lists
 double A-sides as `Side A ; Side B` and versions sharing a position as
 `Artist A / Artist B` (with a title per artist, or one shared title); each
 song gets the entry's position, and one that also charted under its own
-name keeps that name's song id. A same-artist name such as
-`Title / Title - Remix` or `Title ((1965)) / Title ((1971))` stays one
-entry, unless one of its parts is itself a double A-side. Editions acquired before this rule keep their combined
-names until `chartsacquire --force` re-acquires them, which for the Top 40
-means fetching every week again.
+name, spelled the same, keeps that name's song id. The site also merges a
+song's versions from different years into one name, marking each with its
+year (`Title ((1965)) / Title ((1988))`), and shows that name in each of
+those years; only the versions marked within a year of the edition get
+its position. A same-artist name such as `Title / Title - Remix` or
+`Title ((1965)) / Title ((1971))` stays one song, unless one of its parts
+is itself a double A-side. Editions acquired before this rule keep their
+combined names until `chartsacquire --force` re-acquires them, which for
+the Top 40 means fetching every week again.
 When a song comes back spelled differently only in case, accents or
 punctuation, it keeps the spelling it was first stored with. Each entry
 also keeps the site's own ids in `source_ids`.

@@ -497,6 +497,18 @@ remain. `derived`.
   automatic path, and the catalog's and candidate report's brainstorms
   (#161, #163) start from the structural rules. `evidenced` (the
   spike's counts, 2026-10-04); `derived` (the consequence).
+  *Corrected (2026-10-06, the real-data run of
+  [#183](https://github.com/pvliesdonk/beets-hitlisttag/issues/183)):*
+  `((…))` on an artist is the disambiguator; `((YYYY))` ending a title
+  segment is the site's year marker for one version of a name it merged
+  across years, and the site shows that name in each of those years.
+  `" / "` is the outer separator and `" ; "` the inner one (*Motions /
+  The Four Tops / The Four Tops — It's The Same Old Song ; Someday Child
+  ((1966)) / …*). A same-artist name with a double A-side inside (*Marty
+  — Grootvaders Klok / Grootvaders Klok ; Trompet Polka*; *Henk & Henk*;
+  *The Fortunes*) is split too, so the 21 that need a person are now 18
+  (1 in the Top 40, 17 in the Top 100). `evidenced` (the run;
+  `top40nl.split_names`).
 - **What curation links are keyed on.** Curation must survive a full
   re-acquisition, but the raw song ids it could point at are
   hitlist-scoped and re-minted when a song's normalized name does not
@@ -1048,15 +1060,23 @@ remain. `derived`.
   The Four Tops / The Four Tops — It's The Same Old Song ; Someday Child
   ((1966)) / …*), where `" / "` is the outer separator and `" ; "` the
   inner one, the reverse of the approved order, which was corrected
-  before merge. Re-read from the owner's cache, the split covers 238 Top
-  40 songs over 2,185 weekly entries and 119 Top 100 songs over 126;
-  #160's rule re-applied to the same files gives 2,195 and 127, the
-  difference being one artist spelled twice within a name (*Guns N Roses
-  / Guns N' Roses*, *Jay and The Americans / Jay & The Americans*),
-  which now stays one song. #160's reported song totals (237, 119) differ
-  from its own rule on today's files by two and one; its scripts were not
-  kept. `stated` (the decisions); `evidenced` (the counts: the PR for
-  #183); `derived` (the consequence for held editions).
+  before merge. Its review found the site shows a name it merged across
+  years in each of those years, so the split credited covers in years
+  they never charted (Trea Dobbs and Cilla Black in the Top 100 of
+  1988); a version marked `((YYYY))` now counts only within a year of
+  the edition. Unmarked merges (*Rudy Bennett / Tim Hardin / Tim Hardin*,
+  1967 and 1987) can't be told apart that way
+  ([#184](https://github.com/pvliesdonk/beets-hitlisttag/issues/184)). Re-read from the owner's
+  cache, the split covers 238 Top 40 names over 2,183 weekly entries and
+  116 Top 100 names over 122. #160's rule re-applied to the same files
+  gives 2,195 and 127: one artist spelled twice within a name stays one
+  song (*Guns N Roses / Guns N' Roses*, 10 entries; *Jay and The
+  Americans / Jay & The Americans*, 1), and the year markers leave one
+  version in 2 Top 40 and 4 Top 100 entries. #160's reported song totals
+  (237, 119) differ from its own rule on today's files by two and one;
+  its scripts were not kept. `stated` (the decisions); `evidenced` (the
+  counts: the PR for #183); `derived` (the consequence for held
+  editions).
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
 [n172]: https://github.com/pvliesdonk/beets-hitlisttag/issues/172#issuecomment-5995755414
