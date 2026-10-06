@@ -139,6 +139,18 @@ class TestFetch:
             ("Act 8", "Tune / Tune - Edit")
         ]
 
+    def test_merged_name_credits_only_this_years_versions(self):
+        page = _year_page(
+            range(1, SIZE + 1),
+            title=lambda p: "Tune ((1965)) / Tune ((1988))" if p == 3 else f"Song {p}",
+            artist=lambda p: "Act One / Act Two" if p == 3 else f"Act {p}",
+        )
+        ing, _ = _ingestor(y1988=page)
+        entry = ing.fetch(EditionRef({"year": 1988})).entries[2]
+        assert [(s.artist, s.title) for s in entry.songs] == [
+            ("Act Two", "Tune ((1988))")
+        ]
+
     def test_page_order_does_not_matter(self):
         ing, _ = _ingestor(y1990=_year_page(reversed(range(1, SIZE + 1))))
         positions = [e.position for e in ing.fetch(EditionRef({"year": 1990})).entries]

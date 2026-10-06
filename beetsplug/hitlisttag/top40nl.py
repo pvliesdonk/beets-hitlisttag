@@ -254,6 +254,7 @@ def position_problems(positions: Sequence[int], size: int) -> str:
 
 _SIDES = " ; "
 _VERSIONS = " / "
+_YEAR_MARKER = re.compile(r"\(\((\d{4})\)\)\s*$")
 
 
 def _parts(text: str, separator: str) -> list[str] | None:
@@ -296,7 +297,22 @@ def _sides(artist: str, title: str) -> list[tuple[str, str]] | None:
     return None
 
 
-def split_names(artist: str, title: str) -> list[tuple[str, str]]:
+def _in_year(segments: list[tuple[str, str]], year: int) -> list[tuple[str, str]]:
+    """The segments that belong to an edition of ``year``: unmarked ones,
+    and those whose ``((YYYY))`` marker is at most a year away (a late
+    release charting into January). All of them if that leaves none."""
+
+    def near(segment: tuple[str, str]) -> bool:
+        marker = _YEAR_MARKER.search(segment[1])
+        return marker is None or abs(int(marker.group(1)) - year) <= 1
+
+    kept = [segment for segment in segments if near(segment)]
+    return kept or segments
+
+
+def split_names(
+    artist: str, title: str, year: int | None = None
+) -> list[tuple[str, str]]:
     """The songs one top40.nl list item credits, as (artist, title) pairs.
 
     ``" / "`` is the outer separator: versions sharing the position, or the
@@ -304,6 +320,11 @@ def split_names(artist: str, title: str) -> list[tuple[str, str]]:
     ``((year))`` marker. Several artists take one title each in turn, or
     the same one. Within each segment, ``" ; "`` is a double A-side: one
     artist with each title, or paired in order with as many artists.
+
+    The site shows a merged name in every edition any of its versions
+    charted in, so with the edition's ``year`` a segment marked for a year
+    more than one away is left out (an unmarked one stays; if none is near,
+    all stay). Without a year, every segment counts.
 
     A same-artist name (``"Tune / Tune - Remix"``) is one song, left whole
     for curation to fold, unless a segment is a double A-side, whose other
@@ -319,6 +340,8 @@ def split_names(artist: str, title: str) -> list[tuple[str, str]]:
     has_sides = _SIDES in artist or _SIDES in title
     if _VERSIONS not in artist and len(segments) > 1 and not has_sides:
         return whole
+    if year is not None and len(segments) > 1:
+        segments = _in_year(segments, year)
     parts = [part for seg in segments for part in (_sides(*seg) or [seg])]
     seen: set[tuple[str, str]] = set()
     distinct = []

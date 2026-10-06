@@ -327,6 +327,14 @@ class TestFetch:
             ("Pretend Act", "Tune / Tune - Remix")
         ]
 
+    def test_merged_name_credits_only_this_years_versions(self):
+        names = {3: ("Act One / Act Two", "Tune ((1982)) / Tune ((1990))")}
+        site = Site({"/top40/1990/week-20": _week_page(names=names)})
+        edition = Top40Ingestor(get=site).fetch(EditionRef({"year": 1990, "week": 20}))
+        assert [(s.artist, s.title) for s in edition.entries[2].songs] == [
+            ("Act Two", "Tune ((1990))")
+        ]
+
     def test_shortened_bundle_restored_then_split(self):
         names = {5: ("Duo One / Duo Tw..", "Tune A / Tune B")}
         page = _week_page(names=names).replace(
