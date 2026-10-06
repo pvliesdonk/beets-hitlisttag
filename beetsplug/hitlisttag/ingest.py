@@ -90,9 +90,10 @@ class RawSong:
 class RawEntry:
     """One release at one rank.
 
-    More than one song only when the source itself lists them separately;
-    an ingestor never splits an "A / B" title -- song resolution is the
-    ontology's job.
+    More than one song when the source credits several songs at one rank,
+    as with a double A-side. An ingestor splits a published name only by a
+    convention it knows its source follows (top40.nl's, in
+    ``top40nl.split_names``); elsewhere "A / B" can be one real title.
 
     ``source_ids`` holds the identifiers the source publishes for this
     entry, raw, keyed ``<source>/<kind>`` (``{"top40.nl/title": "8522"}``).

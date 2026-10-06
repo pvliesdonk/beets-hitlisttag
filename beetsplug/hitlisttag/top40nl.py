@@ -10,6 +10,11 @@ certificate chain may have changed.
 ``parse_list`` reads a top40.nl list page (a Top 100 year list or a weekly
 Top 40) into ``ListItem``s, in page order, without validating them; each
 ingestor decides what a usable edition is.
+
+``split_names`` reads the site's convention for an entry crediting several
+songs: ``" ; "`` joins the sides of a double A-side, and ``" / "`` between
+artists joins versions sharing one position (#160, #183). It is the site's
+convention, not a general one: elsewhere ``" / "`` is part of real titles.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 
 from beetsplug.hitlisttag.fetch import Fetcher
+from beetsplug.hitlisttag.lookup import match_key
 
 BASE_URL = "https://www.top40.nl"
 
@@ -244,3 +250,112 @@ def position_problems(positions: Sequence[int], size: int) -> str:
     if outside:
         problems.append(f"positions outside 1–{size}: {_ranges(outside)}")
     return "; ".join(problems)
+
+
+_SIDES = " ; "
+_VERSIONS = " / "
+_YEAR_MARKER = re.compile(r"\(\((\d{4})\)\)\s*$")
+
+
+def _parts(text: str, separator: str) -> list[str] | None:
+    """``text`` split on ``separator`` and stripped; None if a part is empty."""
+    parts = [part.strip() for part in text.split(separator)]
+    return parts if all(parts) else None
+
+
+def _segments(artist: str, title: str) -> list[tuple[str, str]] | None:
+    """The outer, ``" / "`` level: versions sharing the position (several
+    artists with one title, or paired in order with as many titles), or a
+    same-artist name's title segments. None when it can't split."""
+    titles = _parts(title, _VERSIONS) if _VERSIONS in title else [title]
+    if _VERSIONS not in artist:
+        return None if titles is None else [(artist, t) for t in titles]
+    artists = _parts(artist, _VERSIONS)
+    if artists is None or titles is None:
+        return None
+    if len(titles) == 1:
+        return [(a, titles[0]) for a in artists]
+    if len(titles) == len(artists):
+        return list(zip(artists, titles, strict=True))
+    return None
+
+
+def _sides(artist: str, title: str) -> list[tuple[str, str]] | None:
+    """The inner, ``" ; "`` level of one segment: a double A-side (one
+    artist with each title, or paired in order with as many artists).
+    None when it can't split."""
+    if _SIDES not in artist and _SIDES not in title:
+        return [(artist, title)]
+    artists = _parts(artist, _SIDES)
+    titles = _parts(title, _SIDES)
+    if artists is None or titles is None:
+        return None
+    if len(artists) == 1:
+        return [(artists[0], t) for t in titles]
+    if len(artists) == len(titles):
+        return list(zip(artists, titles, strict=True))
+    return None
+
+
+def _in_year(segments: list[tuple[str, str]], year: int) -> list[tuple[str, str]]:
+    """The segments that belong to an edition of ``year``: unmarked ones,
+    and those whose ``((YYYY))`` marker is at most a year away (a late
+    release charting into January). All of them if that leaves none."""
+
+    def near(segment: tuple[str, str]) -> bool:
+        marker = _YEAR_MARKER.search(segment[1])
+        return marker is None or abs(int(marker.group(1)) - year) <= 1
+
+    kept = [segment for segment in segments if near(segment)]
+    return kept or segments
+
+
+def split_names(
+    artist: str, title: str, year: int | None = None
+) -> list[tuple[str, str]]:
+    """The songs one top40.nl list item credits, as (artist, title) pairs.
+
+    ``" / "`` is the outer separator: versions sharing the position, or the
+    site's merge of a song's re-entries, each segment ending in its
+    ``((year))`` marker. Several artists take one title each in turn, or
+    the same one. Within each segment, ``" ; "`` is a double A-side: one
+    artist with each title, or paired in order with as many artists.
+
+    The site shows a merged name in every edition any of its versions
+    charted in, so with the edition's ``year`` a segment marked for a year
+    more than one away is left out (an unmarked one stays; if none is near,
+    all stay). Without a year, every segment counts. A part's marker is then
+    dropped, so one song reads the same in every year.
+
+    A same-artist name (``"Tune / Tune - Remix"``) is one song, left whole
+    for curation to fold, unless a segment is a double A-side, whose other
+    side only the split can credit. A count that fits no rule leaves the
+    name, or that segment, as published. Parts equal under ``match_key``
+    collapse to the first: the site's re-entry markers and one artist's
+    two spellings are one song, and the lookup could not tell them apart.
+    """
+    whole = [(artist, title)]
+    segments = _segments(artist, title)
+    if segments is None:
+        return whole
+    has_sides = _SIDES in artist or _SIDES in title
+    if _VERSIONS not in artist and len(segments) > 1 and not has_sides:
+        return whole
+    if len(segments) > 1:
+        if year is not None:
+            segments = _in_year(segments, year)
+        # The marker only placed the segment; without it one song reads the
+        # same in every year, so acquisition gives it one id.
+        segments = [(a, _YEAR_MARKER.sub("", t).rstrip()) for a, t in segments]
+    parts = [part for seg in segments for part in (_sides(*seg) or [seg])]
+    seen: set[tuple[str, str]] = set()
+    distinct = []
+    for part_artist, part_title in parts:
+        key = (
+            match_key(part_artist) or part_artist.strip(),
+            match_key(part_title) or part_title.strip(),
+        )
+        if key not in seen:
+            seen.add(key)
+            distinct.append((part_artist, part_title))
+    return distinct

@@ -274,9 +274,13 @@ The rules `chartsacquire` enforces:
   entries. Scores are computed from it.
 - Positions are whole numbers from 1 to `size`, each used once per
   edition.
-- An entry lists more than one song only when the source itself lists
-  them separately, as with a double A-side. Don't split a title such as
-  "Side A / Side B" yourself.
+- An entry lists more than one song when the source credits several songs
+  at one rank, as with a double A-side. Split a published name only by a
+  convention you know your source follows: top40.nl writes double A-sides
+  as `Side A ; Side B` and versions sharing a position as
+  `Artist A / Artist B`, but on other sources (Wikipedia's Top 2000) a
+  `" / "` is part of real titles such as *Laat me / vivre*. Each song is
+  then credited with the entry's position.
 - `editions()` may be slow (it may need to fetch a page). It's called
   once per run, and duplicate refs are ignored.
 

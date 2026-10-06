@@ -118,17 +118,36 @@ class TestFetch:
         }
         assert dict(second.source_ids) == {"top40.nl/title": "5002"}
 
-    def test_entries_kept_as_published(self):
+    def test_multi_song_entries_credit_each_song(self):
         page = _year_page(
             range(1, SIZE + 1),
-            title=lambda p: "Side A ; Side B" if p == 7 else f"Song {p}",
+            title=lambda p: {7: "Side A ; Side B", 8: "Tune / Tune - Edit"}.get(
+                p, f"Song {p}"
+            ),
             artist=lambda p: "Duo One / Trio Two ((GBR))" if p == 7 else f"Act {p}",
         )
         ing, _ = _ingestor(y1965=page)
-        entry = ing.fetch(EditionRef({"year": 1965})).entries[6]
-        assert len(entry.songs) == 1
-        assert entry.songs[0].title == "Side A ; Side B"
-        assert entry.songs[0].artist == "Duo One / Trio Two ((GBR))"
+        entries = ing.fetch(EditionRef({"year": 1965})).entries
+        assert [(s.artist, s.title) for s in entries[6].songs] == [
+            ("Duo One", "Side A"),
+            ("Duo One", "Side B"),
+            ("Trio Two ((GBR))", "Side A"),
+            ("Trio Two ((GBR))", "Side B"),
+        ]
+        assert dict(entries[6].source_ids)["top40.nl/title"] == "5007"
+        assert [(s.artist, s.title) for s in entries[7].songs] == [
+            ("Act 8", "Tune / Tune - Edit")
+        ]
+
+    def test_merged_name_credits_only_this_years_versions(self):
+        page = _year_page(
+            range(1, SIZE + 1),
+            title=lambda p: "Tune ((1965)) / Tune ((1988))" if p == 3 else f"Song {p}",
+            artist=lambda p: "Act One / Act Two" if p == 3 else f"Act {p}",
+        )
+        ing, _ = _ingestor(y1988=page)
+        entry = ing.fetch(EditionRef({"year": 1988})).entries[2]
+        assert [(s.artist, s.title) for s in entry.songs] == [("Act Two", "Tune")]
 
     def test_page_order_does_not_matter(self):
         ing, _ = _ingestor(y1990=_year_page(reversed(range(1, SIZE + 1))))

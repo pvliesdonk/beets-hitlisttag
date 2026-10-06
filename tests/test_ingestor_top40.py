@@ -310,6 +310,45 @@ class TestFetch:
         }
         assert all(e.songs[0].title != "Gone Tune" for e in edition.entries)
 
+    def test_multi_song_entry_credits_each_song(self):
+        names = {
+            7: ("Duo One / Duo Two", "Tune A / Tune B"),
+            8: ("Pretend Act", "Tune / Tune - Remix"),
+        }
+        site = Site({"/top40/1990/week-20": _week_page(names=names)})
+        edition = Top40Ingestor(get=site).fetch(EditionRef({"year": 1990, "week": 20}))
+        bundle, variant = edition.entries[6], edition.entries[7]
+        assert [(s.artist, s.title) for s in bundle.songs] == [
+            ("Duo One", "Tune A"),
+            ("Duo Two", "Tune B"),
+        ]
+        assert dict(bundle.source_ids)["top40.nl/title"] == "7007"
+        assert [(s.artist, s.title) for s in variant.songs] == [
+            ("Pretend Act", "Tune / Tune - Remix")
+        ]
+
+    def test_merged_name_credits_only_this_years_versions(self):
+        names = {3: ("Act One / Act Two", "Tune ((1982)) / Tune ((1990))")}
+        site = Site({"/top40/1990/week-20": _week_page(names=names)})
+        edition = Top40Ingestor(get=site).fetch(EditionRef({"year": 1990, "week": 20}))
+        assert [(s.artist, s.title) for s in edition.entries[2].songs] == [
+            ("Act Two", "Tune")
+        ]
+
+    def test_shortened_bundle_restored_then_split(self):
+        names = {5: ("Duo One / Duo Tw..", "Tune A / Tune B")}
+        page = _week_page(names=names).replace(
+            "Details Duo One / Duo Tw.. - Tune A / Tune B",
+            "Details Duo One / Duo Two - Tune A / Tune B",
+        )
+        edition = Top40Ingestor(get=Site({"/top40/1990/week-20": page})).fetch(
+            EditionRef({"year": 1990, "week": 20})
+        )
+        assert [(s.artist, s.title) for s in edition.entries[4].songs] == [
+            ("Duo One", "Tune A"),
+            ("Duo Two", "Tune B"),
+        ]
+
     def test_shortened_name_restored_from_image_title(self):
         names = {5: ("The Very Long Name Of An Imaginary Orch..", "Tune")}
         page = _week_page(names=names).replace(
@@ -418,11 +457,16 @@ def test_real_cached_week_pages(caplog):
                 if item.position is not None
             }
             for entry in edition.entries:
-                song = entry.songs[0]
-                assert f"{song.artist} - {song.title}" == shown[entry.position], (
-                    page,
-                    entry.position,
-                )
+                where = (page, entry.position)
+                full = shown[entry.position]
+                if " / " not in full and " ; " not in full:
+                    song = entry.songs[0]
+                    assert len(entry.songs) == 1, where
+                    assert f"{song.artist} - {song.title}" == full, where
+                else:  # split (or collapsed to one): each part is from the title
+                    for song in entry.songs:
+                        assert song.artist in full, where
+                        assert song.title in full, where
     assert "cannot restore" not in caplog.text
     for page in pages:
         year = int(page.parent.name)
