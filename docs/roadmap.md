@@ -580,6 +580,11 @@ remain. `derived`.
   curation features work from the dataset alone, unless the catalog's
   brainstorm (#161) finds otherwise. The user-facing cache stays an
   option with no owner; recorded, not ticketed. `derived`.
+  *Corrected (2026-10-06, #162's brainstorm):* the split of multi-song
+  entries moved to acquisition
+  ([#183](https://github.com/pvliesdonk/beets-hitlisttag/issues/183)),
+  so held Top 40 and Top 100 editions need one `chartsacquire --force`
+  to be split: a re-fetch of every page without a cache. `derived`.
   A further reason (owner, 2026-10-03, during #123): an edition spanning
   several pages is skipped whole when one page fails, and only a cache
   keeps its other pages for the retry. `stated`.
@@ -1025,6 +1030,33 @@ remain. `derived`.
   chart. The catalog's storage stays JSON (see *On-disk dataset form*).
   Built by #179, which now blocks #165. `stated` (the decisions);
   `derived` (the rejected option's argument).
+- 2026-10-06 — #162's brainstorm (merge and split curation), owner
+  decisions: a multi-song entry is split, not curated one name at a
+  time, and the split is part of acquisition, done by the source's
+  ingestor, because the structure is the source's convention (top40.nl's
+  `" ; "` and `" / "` across artists, #160) and not a general one
+  (Wikipedia's Top 2000 has `" / "` inside real titles, *Laat me /
+  vivre*). A split part joins the raw song with its strict name through
+  acquisition's id reuse: of 38 Top 40 parts sharing a name with a raw
+  song in the chart, all 38 were strictly equal and 35 shared the title
+  id (`evidenced`: the brainstorm's count over the owner's data,
+  2026-10-05). Curation keeps merge, fold (`merge --name`), alias and
+  targeted inverse operations; catalog song ids are never reused; a raw
+  song belongs to at most one catalog song. Built as #183 (the split)
+  and #162 (the operations). The method finding held once more: the
+  real-data run of #183 found names mixing both separators (*Motions /
+  The Four Tops / The Four Tops — It's The Same Old Song ; Someday Child
+  ((1966)) / …*), where `" / "` is the outer separator and `" ; "` the
+  inner one, the reverse of the approved order, which was corrected
+  before merge. Re-read from the owner's cache, the split covers 238 Top
+  40 songs over 2,185 weekly entries and 119 Top 100 songs over 126;
+  #160's rule re-applied to the same files gives 2,195 and 127, the
+  difference being one artist spelled twice within a name (*Guns N Roses
+  / Guns N' Roses*, *Jay and The Americans / Jay & The Americans*),
+  which now stays one song. #160's reported song totals (237, 119) differ
+  from its own rule on today's files by two and one; its scripts were not
+  kept. `stated` (the decisions); `evidenced` (the counts: the PR for
+  #183); `derived` (the consequence for held editions).
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
 [n172]: https://github.com/pvliesdonk/beets-hitlisttag/issues/172#issuecomment-5995755414
