@@ -229,7 +229,8 @@ class Top40Ingestor:
                 ids["top40.nl/title"] = item.title_id
             if item.subtitle:
                 ids["top40.nl/subtitle"] = item.subtitle
-            entries.append(RawEntry(item.position, (RawSong(artist, title),), ids))
+            songs = tuple(RawSong(a, t) for a, t in top40nl.split_names(artist, title))
+            entries.append(RawEntry(item.position, songs, ids))
         return AcquiredEdition(ref, SIZE, tuple(entries))
 
 

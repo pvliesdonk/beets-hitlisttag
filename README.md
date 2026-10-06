@@ -446,11 +446,16 @@ The site reserves copyright and database rights over its charts. What
 `chartsacquire` stores is your private copy: don't publish or share the
 dataset files.
 
-Entries are stored as the site publishes them. The site merges versions
-of a song into one entry (`Artist A / Artist B`, `Title ((1965))`) and
-lists double A-sides as `Side A ; Side B`. `chartsgen` doesn't connect
-these entries to your tracks; telling which song an entry means is
-planned work ([roadmap](docs/roadmap.md), song ontology and curation).
+Entries are stored as the site publishes them, with one exception: an
+entry crediting several songs is stored as those songs. The site lists
+double A-sides as `Side A ; Side B` and versions sharing a position as
+`Artist A / Artist B` (with a title per artist, or one shared title); each
+song gets the entry's position, and one that also charted under its own
+name keeps that name's song id. A same-artist variant such as
+`Title / Title - Remix` stays one entry, as do the site's year markers
+(`Title ((1965))`). Editions acquired before this rule keep their combined
+names until `chartsacquire --force` re-acquires them, which for the Top 40
+means fetching every week again.
 When a song comes back spelled differently only in case, accents or
 punctuation, it keeps the spelling it was first stored with. Each entry
 also keeps the site's own ids in `source_ids`.

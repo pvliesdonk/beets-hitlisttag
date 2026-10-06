@@ -97,6 +97,30 @@ class TestMergeAcquired:
         assert _ids(data, 2001) == ["1", "2"]
         assert new == 2
 
+    def test_split_part_joins_the_raw_song_with_its_strict_name(self):
+        # #183: a part of a multi-song entry reuses the id of the raw song
+        # its strict name already has; a name equal only after match_key's
+        # extra folding (here the site's ((…)) disambiguator) does not.
+        existing = _existing(
+            {"3": ("Solo Act", "Tune A"), "4": ("Other Act", "Tune B")}
+        )
+        bundle = AcquiredEdition(
+            EditionRef({"year": 1965}),
+            1,
+            (
+                RawEntry(
+                    1,
+                    (
+                        RawSong("Solo Act", "Tune A"),
+                        RawSong("Other Act ((GBR))", "Tune B"),
+                    ),
+                ),
+            ),
+        )
+        data, new = merge_acquired(existing, "fake", ["year"], [bundle], SRC, log)
+        assert _ids(data, 1965) == ["3", "5"]
+        assert new == 1
+
     def test_same_song_across_editions_shares_id(self):
         data, new = merge_acquired(
             None,
