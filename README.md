@@ -455,7 +455,8 @@ name, spelled the same, keeps that name's song id. The site also merges a
 song's versions from different years into one name, marking each with its
 year (`Title ((1965)) / Title ((1988))`), and shows that name in each of
 those years; only the versions marked within a year of the edition get
-its position. A same-artist name such as `Title / Title - Remix` or
+its position, stored without the marker so each keeps one song id across
+years. A same-artist name such as `Title / Title - Remix` or
 `Title ((1965)) / Title ((1971))` stays one song, unless one of its parts
 is itself a double A-side. Editions acquired before this rule keep their
 combined names until `chartsacquire --force` re-acquires them, which for

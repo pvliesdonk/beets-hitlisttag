@@ -212,8 +212,8 @@ class TestSplitNames:
             "Tune ; B-Side ((1966)) / Tune ((1966)) / Tune ((1971))",
         ) == [
             ("Act One", "Tune"),
-            ("Act One", "B-Side ((1966))"),
-            ("Act Two", "Tune ((1966))"),
+            ("Act One", "B-Side"),
+            ("Act Two", "Tune"),
         ]
 
     def test_same_artist_variants_with_a_double_a_side_inside(self):
@@ -228,10 +228,10 @@ class TestSplitNames:
         # ((year)) on a title is the site's re-entry marker for the same song.
         assert top40nl.split_names(
             "Pretend Act", "Tune ; Other Side ((1982)) / Tune ((2013))"
-        ) == [("Pretend Act", "Tune"), ("Pretend Act", "Other Side ((1982))")]
+        ) == [("Pretend Act", "Tune"), ("Pretend Act", "Other Side")]
         assert top40nl.split_names(
             "Pretend Act", "Tune ((1965)) / Tune ; Other Side ((1974))"
-        ) == [("Pretend Act", "Tune ((1965))"), ("Pretend Act", "Other Side ((1974))")]
+        ) == [("Pretend Act", "Tune"), ("Pretend Act", "Other Side")]
 
     # The site shows one merged name in every edition any of its versions
     # charted in; a segment's ((year)) marker says which edition it belongs
@@ -243,44 +243,54 @@ class TestSplitNames:
     )
 
     def test_a_segment_marked_for_another_year_is_left_out(self):
-        assert top40nl.split_names(*self.MERGED, year=1988) == [
-            ("Act One", "Tune ((1988))")
-        ]
+        assert top40nl.split_names(*self.MERGED, year=1988) == [("Act One", "Tune")]
         assert top40nl.split_names(*self.MERGED, year=1965) == [
-            ("Act One", "Tune ((1965))"),
-            ("Act Two", "Tune ((1965))"),
-            ("Act Three", "Tune ((1965))"),
+            ("Act One", "Tune"),
+            ("Act Two", "Tune"),
+            ("Act Three", "Tune"),
         ]
 
     def test_a_marker_one_year_off_still_counts(self):
         # A late-1965 version still charting in January 1966.
         assert top40nl.split_names(*self.MERGED, year=1966) == [
-            ("Act One", "Tune ((1965))"),
-            ("Act Two", "Tune ((1965))"),
-            ("Act Three", "Tune ((1965))"),
+            ("Act One", "Tune"),
+            ("Act Two", "Tune"),
+            ("Act Three", "Tune"),
         ]
 
     def test_a_marker_covers_its_whole_segment(self):
         # Henk & Henk's shape, in a 2013 week: the 1982 double A-side goes.
         assert top40nl.split_names(
             "Pretend Act", "Tune ; Other Side ((1982)) / Tune ((2013))", year=2013
-        ) == [("Pretend Act", "Tune ((2013))")]
+        ) == [("Pretend Act", "Tune")]
 
     def test_unmarked_segments_stay_and_no_year_keeps_all(self):
         name = ("Act One / Act Two", "Tune ((1965)) / Tune")
         assert top40nl.split_names(*name, year=1988) == [("Act Two", "Tune")]
         assert top40nl.split_names(*self.MERGED) == [
-            ("Act One", "Tune ((1965))"),
-            ("Act Two", "Tune ((1965))"),
-            ("Act Three", "Tune ((1965))"),
+            ("Act One", "Tune"),
+            ("Act Two", "Tune"),
+            ("Act Three", "Tune"),
         ]
 
     def test_no_segment_near_the_year_keeps_them_all(self):
         assert top40nl.split_names(*self.MERGED, year=2000) == [
-            ("Act One", "Tune ((1965))"),
-            ("Act Two", "Tune ((1965))"),
-            ("Act Three", "Tune ((1965))"),
+            ("Act One", "Tune"),
+            ("Act Two", "Tune"),
+            ("Act Three", "Tune"),
         ]
+
+    def test_one_song_reads_the_same_in_every_year(self):
+        # The marker has done its job once the year is chosen: dropping it
+        # lets acquisition give the 1982 and 2013 editions one raw id (the
+        # real Henk & Henk entry; match_key already ignores the marker).
+        name = ("Pretend Act", "Tune ; Other Side ((1982)) / Tune ((2013))")
+        assert ("Pretend Act", "Tune") in top40nl.split_names(*name, year=1982)
+        assert top40nl.split_names(*name, year=2013) == [("Pretend Act", "Tune")]
+
+    def test_a_same_artist_name_kept_whole_keeps_its_markers(self):
+        name = ("Pretend Act", "Tune ((1966)) / Tune - Remix ((1990))")
+        assert top40nl.split_names(*name, year=1990) == [name]
 
     def test_mismatched_counts_stay_one_song(self):
         for name in (

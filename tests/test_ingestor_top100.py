@@ -147,9 +147,7 @@ class TestFetch:
         )
         ing, _ = _ingestor(y1988=page)
         entry = ing.fetch(EditionRef({"year": 1988})).entries[2]
-        assert [(s.artist, s.title) for s in entry.songs] == [
-            ("Act Two", "Tune ((1988))")
-        ]
+        assert [(s.artist, s.title) for s in entry.songs] == [("Act Two", "Tune")]
 
     def test_page_order_does_not_matter(self):
         ing, _ = _ingestor(y1990=_year_page(reversed(range(1, SIZE + 1))))

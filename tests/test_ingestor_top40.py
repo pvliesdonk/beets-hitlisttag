@@ -332,7 +332,7 @@ class TestFetch:
         site = Site({"/top40/1990/week-20": _week_page(names=names)})
         edition = Top40Ingestor(get=site).fetch(EditionRef({"year": 1990, "week": 20}))
         assert [(s.artist, s.title) for s in edition.entries[2].songs] == [
-            ("Act Two", "Tune ((1990))")
+            ("Act Two", "Tune")
         ]
 
     def test_shortened_bundle_restored_then_split(self):

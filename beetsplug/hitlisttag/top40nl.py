@@ -324,7 +324,8 @@ def split_names(
     The site shows a merged name in every edition any of its versions
     charted in, so with the edition's ``year`` a segment marked for a year
     more than one away is left out (an unmarked one stays; if none is near,
-    all stay). Without a year, every segment counts.
+    all stay). Without a year, every segment counts. A part's marker is then
+    dropped, so one song reads the same in every year.
 
     A same-artist name (``"Tune / Tune - Remix"``) is one song, left whole
     for curation to fold, unless a segment is a double A-side, whose other
@@ -340,8 +341,12 @@ def split_names(
     has_sides = _SIDES in artist or _SIDES in title
     if _VERSIONS not in artist and len(segments) > 1 and not has_sides:
         return whole
-    if year is not None and len(segments) > 1:
-        segments = _in_year(segments, year)
+    if len(segments) > 1:
+        if year is not None:
+            segments = _in_year(segments, year)
+        # The marker only placed the segment; without it one song reads the
+        # same in every year, so acquisition gives it one id.
+        segments = [(a, _YEAR_MARKER.sub("", t).rstrip()) for a, t in segments]
     parts = [part for seg in segments for part in (_sides(*seg) or [seg])]
     seen: set[tuple[str, str]] = set()
     distinct = []

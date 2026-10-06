@@ -1064,7 +1064,8 @@ remain. `derived`.
   years in each of those years, so the split credited covers in years
   they never charted (Trea Dobbs and Cilla Black in the Top 100 of
   1988); a version marked `((YYYY))` now counts only within a year of
-  the edition. Unmarked merges (*Rudy Bennett / Tim Hardin / Tim Hardin*,
+  the edition, and is stored without the marker so one song keeps one id
+  across years. Unmarked merges (*Rudy Bennett / Tim Hardin / Tim Hardin*,
   1967 and 1987) can't be told apart that way
   ([#184](https://github.com/pvliesdonk/beets-hitlisttag/issues/184)). Re-read from the owner's
   cache, the split covers 238 Top 40 names over 2,183 weekly entries and
