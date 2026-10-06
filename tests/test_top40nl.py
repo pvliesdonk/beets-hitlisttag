@@ -154,3 +154,97 @@ class TestPositionProblems:
 
     def test_empty(self):
         assert top40nl.position_problems([], 100) == "missing positions 1–100"
+
+
+class TestSplitNames:
+    """top40.nl's convention (#160, classes A–E): " ; " is a double A-side,
+    " / " between artists is versions sharing a position."""
+
+    def test_plain_name_is_one_song(self):
+        assert top40nl.split_names("Pretend Act", "Made Up Tune") == [
+            ("Pretend Act", "Made Up Tune")
+        ]
+
+    def test_one_artist_two_sides(self):  # class A
+        assert top40nl.split_names("Pretend Act", "Side A ; Side B") == [
+            ("Pretend Act", "Side A"),
+            ("Pretend Act", "Side B"),
+        ]
+
+    def test_sides_with_their_own_artists_pair_in_order(self):  # class B
+        assert top40nl.split_names("Act One ; Act Two", "Side A ; Side B") == [
+            ("Act One", "Side A"),
+            ("Act Two", "Side B"),
+        ]
+
+    def test_versions_of_one_title(self):  # class C
+        assert top40nl.split_names("Act One / Act Two / Act Three", "Shared Tune") == [
+            ("Act One", "Shared Tune"),
+            ("Act Two", "Shared Tune"),
+            ("Act Three", "Shared Tune"),
+        ]
+
+    def test_versions_with_their_own_titles_pair_in_order(self):  # class D
+        assert top40nl.split_names(
+            "Act One / Act Two", "Tune / Abschiedstune (Tune)"
+        ) == [("Act One", "Tune"), ("Act Two", "Abschiedstune (Tune)")]
+
+    def test_same_artist_title_variants_stay_one_song(self):  # class E
+        name = ("Pretend Act", "Tune / Tune - Original Version")
+        assert top40nl.split_names(*name) == [name]
+
+    def test_sides_then_versions(self):
+        # The Top 100's merged names: a side holding " / " in the title stays
+        # whole (same artist), and " / " in the artist splits each side.
+        assert top40nl.split_names(
+            "Pretend Act", "Tune ((1965)) / Tune ; Other Side ((1974))"
+        ) == [
+            ("Pretend Act", "Tune ((1965)) / Tune"),
+            ("Pretend Act", "Other Side ((1974))"),
+        ]
+        assert top40nl.split_names("Duo One / Trio Two ((GBR))", "Side A ; Side B") == [
+            ("Duo One", "Side A"),
+            ("Trio Two ((GBR))", "Side A"),
+            ("Duo One", "Side B"),
+            ("Trio Two ((GBR))", "Side B"),
+        ]
+
+    def test_mismatched_counts_stay_one_song(self):
+        for name in (
+            ("Act One ; Act Two ; Act Three", "Side A ; Side B"),
+            ("Act One ; Act Two", "One Title"),
+            ("Act One / Act Two / Act Three", "Tune A / Tune B"),
+        ):
+            assert top40nl.split_names(*name) == [name]
+
+    def test_a_side_that_cannot_split_stays_whole(self):
+        # " ; " splits first: one artist part, two titles -> two sides, each
+        # with the three-artist name; "A / B" against three artists is a count
+        # mismatch, so that side stays whole; "C" splits into three versions.
+        assert top40nl.split_names("Act One / Act Two / Act Three", "A / B ; C") == [
+            ("Act One / Act Two / Act Three", "A / B"),
+            ("Act One", "C"),
+            ("Act Two", "C"),
+            ("Act Three", "C"),
+        ]
+
+    def test_separators_need_their_spaces(self):
+        for name in (("AC/DC", "Tune"), ("Pretend Act", "Hello;Goodbye")):
+            assert top40nl.split_names(*name) == [name]
+
+    def test_an_empty_part_leaves_the_name_unsplit(self):
+        for name in (("Pretend Act", "Side A ; "), (" / Act Two", "Tune")):
+            assert top40nl.split_names(*name) == [name]
+
+    def test_parts_are_stripped(self):
+        assert top40nl.split_names("Act One  /  Act Two", "Tune") == [
+            ("Act One", "Tune"),
+            ("Act Two", "Tune"),
+        ]
+
+    def test_duplicate_parts_collapse(self):
+        # Equal under the strict normalizer acquisition reuses ids by; a
+        # second copy would get its own raw id (ids never repeat in an edition).
+        assert top40nl.split_names("Pretend Act / PRETEND ACT", "Tune") == [
+            ("Pretend Act", "Tune")
+        ]

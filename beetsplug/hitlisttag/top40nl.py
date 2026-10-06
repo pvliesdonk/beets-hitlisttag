@@ -10,6 +10,11 @@ certificate chain may have changed.
 ``parse_list`` reads a top40.nl list page (a Top 100 year list or a weekly
 Top 40) into ``ListItem``s, in page order, without validating them; each
 ingestor decides what a usable edition is.
+
+``split_names`` reads the site's convention for an entry crediting several
+songs: ``" ; "`` joins the sides of a double A-side, and ``" / "`` between
+artists joins versions sharing one position (#160, #183). It is the site's
+convention, not a general one: elsewhere ``" / "`` is part of real titles.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 
 from beetsplug.hitlisttag.fetch import Fetcher
+from beetsplug.hitlisttag.lookup import normalize
 
 BASE_URL = "https://www.top40.nl"
 
@@ -244,3 +250,70 @@ def position_problems(positions: Sequence[int], size: int) -> str:
     if outside:
         problems.append(f"positions outside 1–{size}: {_ranges(outside)}")
     return "; ".join(problems)
+
+
+_SIDES = " ; "
+_VERSIONS = " / "
+
+
+def _parts(text: str, separator: str) -> list[str] | None:
+    """``text`` split on ``separator`` and stripped; None if a part is empty."""
+    parts = [part.strip() for part in text.split(separator)]
+    return parts if all(parts) else None
+
+
+def _versions(artist: str, title: str) -> list[tuple[str, str]] | None:
+    """One side's versions sharing its position, or None if it can't split."""
+    if _VERSIONS not in artist:
+        return [(artist, title)]
+    artists = _parts(artist, _VERSIONS)
+    titles = [title] if _VERSIONS not in title else _parts(title, _VERSIONS)
+    if artists is None or titles is None:
+        return None
+    if len(titles) == 1:
+        return [(a, titles[0]) for a in artists]
+    if len(titles) == len(artists):
+        return list(zip(artists, titles, strict=True))
+    return None
+
+
+def split_names(artist: str, title: str) -> list[tuple[str, str]]:
+    """The songs one top40.nl list item credits, as (artist, title) pairs.
+
+    ``" ; "`` in the artist or title is a double A-side: one artist is
+    credited with each title, or as many artists as titles pair in order.
+    Then each side whose artist holds ``" / "`` is versions sharing the
+    position: each artist with the one title, or paired in order with as
+    many titles. A count that fits neither leaves that side whole; an empty
+    part leaves the whole name as published. A same-artist title variant
+    (``"Tune / Tune - Remix"``) is one song. Parts equal under ``normalize``
+    collapse to the first, since acquisition would key them as one song.
+    """
+    whole = [(artist, title)]
+    if _SIDES in artist or _SIDES in title:
+        artists = _parts(artist, _SIDES)
+        titles = _parts(title, _SIDES)
+        if artists is None or titles is None:
+            return whole
+        if len(artists) == 1:
+            sides = [(artists[0], t) for t in titles]
+        elif len(artists) == len(titles):
+            sides = list(zip(artists, titles, strict=True))
+        else:
+            return whole
+    else:
+        sides = whole
+    parts: list[tuple[str, str]] = []
+    for side_artist, side_title in sides:
+        versions = _versions(side_artist, side_title)
+        if versions is None and sides is whole:
+            return whole
+        parts.extend(versions or [(side_artist, side_title)])
+    seen: set[tuple[str, str]] = set()
+    distinct = []
+    for part_artist, part_title in parts:
+        key = (normalize(part_artist), normalize(part_title))
+        if key not in seen:
+            seen.add(key)
+            distinct.append((part_artist, part_title))
+    return distinct
