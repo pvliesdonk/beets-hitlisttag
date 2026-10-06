@@ -193,40 +193,61 @@ class TestSplitNames:
         name = ("Pretend Act", "Tune / Tune - Original Version")
         assert top40nl.split_names(*name) == [name]
 
-    def test_sides_then_versions(self):
-        # The Top 100's merged names: a side holding " / " in the title stays
-        # whole (same artist), and " / " in the artist splits each side.
-        assert top40nl.split_names(
-            "Pretend Act", "Tune ((1965)) / Tune ; Other Side ((1974))"
-        ) == [
-            ("Pretend Act", "Tune ((1965)) / Tune"),
-            ("Pretend Act", "Other Side ((1974))"),
-        ]
+    def test_versions_then_sides(self):
+        # " / " is the outer separator (the site's versions or re-entries,
+        # each segment ending in its ((year)) marker), " ; " the inner one.
         assert top40nl.split_names("Duo One / Trio Two ((GBR))", "Side A ; Side B") == [
             ("Duo One", "Side A"),
-            ("Trio Two ((GBR))", "Side A"),
             ("Duo One", "Side B"),
+            ("Trio Two ((GBR))", "Side A"),
             ("Trio Two ((GBR))", "Side B"),
         ]
+
+    def test_versions_with_a_double_a_side_inside(self):
+        # Shape of the real "Motions / The Four Tops / The Four Tops" entry:
+        # three versions paired with three titles, the first a double A-side,
+        # the last two the same song's re-entries.
+        assert top40nl.split_names(
+            "Act One / Act Two / Act Two",
+            "Tune ; B-Side ((1966)) / Tune ((1966)) / Tune ((1971))",
+        ) == [
+            ("Act One", "Tune"),
+            ("Act One", "B-Side ((1966))"),
+            ("Act Two", "Tune ((1966))"),
+        ]
+
+    def test_same_artist_variants_with_a_double_a_side_inside(self):
+        # A same-artist name stays whole (curation folds it) unless a segment
+        # is a double A-side, whose other side only the split can credit.
+        assert top40nl.split_names("Pretend Act", "Tune / Tune ; Other Side") == [
+            ("Pretend Act", "Tune"),
+            ("Pretend Act", "Other Side"),
+        ]
+
+    def test_re_entries_collapse_by_match_key(self):
+        # ((year)) on a title is the site's re-entry marker for the same song.
+        assert top40nl.split_names(
+            "Pretend Act", "Tune ; Other Side ((1982)) / Tune ((2013))"
+        ) == [("Pretend Act", "Tune"), ("Pretend Act", "Other Side ((1982))")]
+        assert top40nl.split_names(
+            "Pretend Act", "Tune ((1965)) / Tune ; Other Side ((1974))"
+        ) == [("Pretend Act", "Tune ((1965))"), ("Pretend Act", "Other Side ((1974))")]
 
     def test_mismatched_counts_stay_one_song(self):
         for name in (
             ("Act One ; Act Two ; Act Three", "Side A ; Side B"),
             ("Act One ; Act Two", "One Title"),
             ("Act One / Act Two / Act Three", "Tune A / Tune B"),
+            ("Act One / Act Two / Act Three", "A / B ; C"),
         ):
             assert top40nl.split_names(*name) == [name]
 
-    def test_a_side_that_cannot_split_stays_whole(self):
-        # " ; " splits first: one artist part, two titles -> two sides, each
-        # with the three-artist name; "A / B" against three artists is a count
-        # mismatch, so that side stays whole; "C" splits into three versions.
-        assert top40nl.split_names("Act One / Act Two / Act Three", "A / B ; C") == [
-            ("Act One / Act Two / Act Three", "A / B"),
-            ("Act One", "C"),
-            ("Act Two", "C"),
-            ("Act Three", "C"),
-        ]
+    def test_a_segment_that_cannot_split_stays_whole(self):
+        # The versions split; the second version's sides don't pair (two
+        # artists, three titles), so that segment stays as it is.
+        assert top40nl.split_names(
+            "Act One / Act Two ; Act Three", "Tune / A ; B ; C"
+        ) == [("Act One", "Tune"), ("Act Two ; Act Three", "A ; B ; C")]
 
     def test_separators_need_their_spaces(self):
         for name in (("AC/DC", "Tune"), ("Pretend Act", "Hello;Goodbye")):
@@ -247,4 +268,9 @@ class TestSplitNames:
         # second copy would get its own raw id (ids never repeat in an edition).
         assert top40nl.split_names("Pretend Act / PRETEND ACT", "Tune") == [
             ("Pretend Act", "Tune")
+        ]
+        # And by match_key: the real "Jay and The Americans / Jay & The
+        # Americans" is one artist; two parts would be ambiguous in lookup.
+        assert top40nl.split_names("Jay and The Act / Jay & The Act", "Tune") == [
+            ("Jay and The Act", "Tune")
         ]

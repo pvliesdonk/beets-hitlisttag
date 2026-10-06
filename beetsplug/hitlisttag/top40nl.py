@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 
 from beetsplug.hitlisttag.fetch import Fetcher
-from beetsplug.hitlisttag.lookup import normalize
+from beetsplug.hitlisttag.lookup import match_key
 
 BASE_URL = "https://www.top40.nl"
 
@@ -262,12 +262,14 @@ def _parts(text: str, separator: str) -> list[str] | None:
     return parts if all(parts) else None
 
 
-def _versions(artist: str, title: str) -> list[tuple[str, str]] | None:
-    """One side's versions sharing its position, or None if it can't split."""
+def _segments(artist: str, title: str) -> list[tuple[str, str]] | None:
+    """The outer, ``" / "`` level: versions sharing the position (several
+    artists with one title, or paired in order with as many titles), or a
+    same-artist name's title segments. None when it can't split."""
+    titles = _parts(title, _VERSIONS) if _VERSIONS in title else [title]
     if _VERSIONS not in artist:
-        return [(artist, title)]
+        return None if titles is None else [(artist, t) for t in titles]
     artists = _parts(artist, _VERSIONS)
-    titles = [title] if _VERSIONS not in title else _parts(title, _VERSIONS)
     if artists is None or titles is None:
         return None
     if len(titles) == 1:
@@ -277,42 +279,54 @@ def _versions(artist: str, title: str) -> list[tuple[str, str]] | None:
     return None
 
 
+def _sides(artist: str, title: str) -> list[tuple[str, str]] | None:
+    """The inner, ``" ; "`` level of one segment: a double A-side (one
+    artist with each title, or paired in order with as many artists).
+    None when it can't split."""
+    if _SIDES not in artist and _SIDES not in title:
+        return [(artist, title)]
+    artists = _parts(artist, _SIDES)
+    titles = _parts(title, _SIDES)
+    if artists is None or titles is None:
+        return None
+    if len(artists) == 1:
+        return [(artists[0], t) for t in titles]
+    if len(artists) == len(titles):
+        return list(zip(artists, titles, strict=True))
+    return None
+
+
 def split_names(artist: str, title: str) -> list[tuple[str, str]]:
     """The songs one top40.nl list item credits, as (artist, title) pairs.
 
-    ``" ; "`` in the artist or title is a double A-side: one artist is
-    credited with each title, or as many artists as titles pair in order.
-    Then each side whose artist holds ``" / "`` is versions sharing the
-    position: each artist with the one title, or paired in order with as
-    many titles. A count that fits neither leaves that side whole; an empty
-    part leaves the whole name as published. A same-artist title variant
-    (``"Tune / Tune - Remix"``) is one song. Parts equal under ``normalize``
-    collapse to the first, since acquisition would key them as one song.
+    ``" / "`` is the outer separator: versions sharing the position, or the
+    site's merge of a song's re-entries, each segment ending in its
+    ``((year))`` marker. Several artists take one title each in turn, or
+    the same one. Within each segment, ``" ; "`` is a double A-side: one
+    artist with each title, or paired in order with as many artists.
+
+    A same-artist name (``"Tune / Tune - Remix"``) is one song, left whole
+    for curation to fold, unless a segment is a double A-side, whose other
+    side only the split can credit. A count that fits no rule leaves the
+    name, or that segment, as published. Parts equal under ``match_key``
+    collapse to the first: the site's re-entry markers and one artist's
+    two spellings are one song, and the lookup could not tell them apart.
     """
     whole = [(artist, title)]
-    if _SIDES in artist or _SIDES in title:
-        artists = _parts(artist, _SIDES)
-        titles = _parts(title, _SIDES)
-        if artists is None or titles is None:
-            return whole
-        if len(artists) == 1:
-            sides = [(artists[0], t) for t in titles]
-        elif len(artists) == len(titles):
-            sides = list(zip(artists, titles, strict=True))
-        else:
-            return whole
-    else:
-        sides = whole
-    parts: list[tuple[str, str]] = []
-    for side_artist, side_title in sides:
-        versions = _versions(side_artist, side_title)
-        if versions is None and sides is whole:
-            return whole
-        parts.extend(versions or [(side_artist, side_title)])
+    segments = _segments(artist, title)
+    if segments is None:
+        return whole
+    has_sides = _SIDES in artist or _SIDES in title
+    if _VERSIONS not in artist and len(segments) > 1 and not has_sides:
+        return whole
+    parts = [part for seg in segments for part in (_sides(*seg) or [seg])]
     seen: set[tuple[str, str]] = set()
     distinct = []
     for part_artist, part_title in parts:
-        key = (normalize(part_artist), normalize(part_title))
+        key = (
+            match_key(part_artist) or part_artist.strip(),
+            match_key(part_title) or part_title.strip(),
+        )
         if key not in seen:
             seen.add(key)
             distinct.append((part_artist, part_title))

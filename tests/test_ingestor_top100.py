@@ -130,8 +130,8 @@ class TestFetch:
         entries = ing.fetch(EditionRef({"year": 1965})).entries
         assert [(s.artist, s.title) for s in entries[6].songs] == [
             ("Duo One", "Side A"),
-            ("Trio Two ((GBR))", "Side A"),
             ("Duo One", "Side B"),
+            ("Trio Two ((GBR))", "Side A"),
             ("Trio Two ((GBR))", "Side B"),
         ]
         assert dict(entries[6].source_ids)["top40.nl/title"] == "5007"
