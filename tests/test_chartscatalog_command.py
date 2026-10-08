@@ -31,8 +31,8 @@ def env(tmp_path):
         yield SimpleNamespace(helper=helper, plugin=plugin, data=tmp_path / "data")
 
 
-def _run(env, *args):
-    env.plugin.catalog_command(env.helper.lib, SimpleNamespace(), list(args))
+def _run(env, *args, **opts):
+    env.plugin.catalog_command(env.helper.lib, SimpleNamespace(**opts), list(args))
 
 
 def _write(path: Path, payload) -> None:
@@ -315,6 +315,210 @@ class TestCheck:
         _write(env.data / "catalog.json", {"catalog": 1, "songs": [], "x": 1})
         with pytest.raises(ui.UserError, match="hitlisttag: .*catalog.json"):
             _run(env, "check")
+
+
+def _songs(env):
+    _dataset(
+        env,
+        "top40",
+        {
+            "1": {"artist": "Pretend Act", "title": "Made Up Tune"},
+            "2": {"artist": "Pretend Act", "title": "Made-Up Tune"},
+            "3": {"artist": "Other Act", "title": "Cheer"},
+        },
+        [
+            {
+                "axes": {"year": 1970, "week": 1},
+                "size": 40,
+                "entries": [
+                    {"position": 1, "songs": ["1"]},
+                    {"position": 2, "songs": ["3"]},
+                ],
+            },
+            {
+                "axes": {"year": 1970, "week": 2},
+                "size": 40,
+                "entries": [{"position": 1, "songs": ["2"]}],
+            },
+        ],
+    )
+
+
+def _catalog(env):
+    return json.loads((env.data / "catalog.json").read_text(encoding="utf-8"))
+
+
+class TestCurate:
+    def test_merge_with_yes_writes(self, env, capsys):
+        _songs(env)
+        _run(env, "merge", "top40:1", "top40:2", yes=True)
+        written = _catalog(env)
+        assert written["next_id"] == 2
+        assert [ln["song"] for ln in written["songs"]["1"]["links"]] == ["1", "2"]
+        assert "merge into new song @1" in capsys.readouterr().out
+
+    def test_a_declined_prompt_writes_nothing(self, env, monkeypatch):
+        _songs(env)
+        monkeypatch.setattr(ui, "input_yn", lambda *a, **k: False)
+        _run(env, "merge", "top40:1", "top40:2")
+        assert not (env.data / "catalog.json").exists()
+
+    def test_the_prompt_has_no_default(self, env, monkeypatch):
+        _songs(env)
+        seen = {}
+
+        def answer(prompt, require=False):
+            seen["require"] = require
+            return True
+
+        monkeypatch.setattr(ui, "input_yn", answer)
+        _run(env, "merge", "top40:1", "top40:2")
+        assert seen == {"require": True} and _catalog(env)["songs"]
+
+    def test_a_query_is_picked_from(self, env, monkeypatch):
+        _songs(env)
+        monkeypatch.setattr(ui, "input_", lambda *a, **k: "1 2")
+        monkeypatch.setattr(ui, "input_yn", lambda *a, **k: True)
+        _run(env, "merge", "made", "tune")
+        assert [ln["song"] for ln in _catalog(env)["songs"]["1"]["links"]] == ["1", "2"]
+
+    @pytest.mark.parametrize("answer", ["0", "3", "x"])
+    def test_a_pick_out_of_range_is_refused(self, env, monkeypatch, answer):
+        _songs(env)
+        monkeypatch.setattr(ui, "input_", lambda *a, **k: answer)
+        with pytest.raises(ui.UserError, match="pick numbers from 1 to 2"):
+            _run(env, "merge", "made", "tune")
+
+    def test_an_empty_pick_writes_nothing(self, env, monkeypatch):
+        _songs(env)
+        monkeypatch.setattr(ui, "input_", lambda *a, **k: "")
+        _run(env, "merge", "made", "tune")
+        assert not (env.data / "catalog.json").exists()
+
+    def test_yes_with_a_query_needs_exactly_one_match(self, env):
+        _songs(env)
+        with pytest.raises(ui.UserError, match="matches 2 songs"):
+            _run(env, "merge", "top40:3", "made", "tune", yes=True)
+        _run(env, "alias", "cheer", "Other Act - Cheers", yes=True)
+        assert _catalog(env)["songs"]["1"]["aliases"] == [
+            {"artist": "Other Act", "title": "Cheers"}
+        ]
+
+    def test_a_query_with_too_many_matches_is_refused(self, env, monkeypatch):
+        _dataset(
+            env,
+            "top40",
+            {str(i): {"artist": "Act", "title": f"Love {i}"} for i in range(1, 25)},
+            [
+                {
+                    "axes": {"year": 1970, "week": 1},
+                    "size": 40,
+                    "entries": [
+                        {"position": i, "songs": [str(i)]} for i in range(1, 25)
+                    ],
+                }
+            ],
+        )
+        with pytest.raises(ui.UserError, match="24 songs match.*narrow"):
+            _run(env, "merge", "love")
+
+    def test_name_folds(self, env):
+        _songs(env)
+        _run(env, "merge", "top40:3", name="Other Act - Cheer!", yes=True)
+        song = _catalog(env)["songs"]["1"]
+        assert (song["artist"], song["title"]) == ("Other Act", "Cheer!")
+
+    def test_unlink_unalias_drop(self, env):
+        _songs(env)
+        _run(env, "merge", "top40:1", "top40:2", name="Pretend Act - Tune", yes=True)
+        _run(env, "unlink", "@1", "top40:2", yes=True)
+        _run(env, "unalias", "@1", "Pretend Act - Tune", yes=True)
+        assert _catalog(env)["songs"]["1"]["aliases"] == []
+        _run(env, "drop", "@1", yes=True)
+        assert _catalog(env) == {"catalog": 1, "next_id": 2, "songs": {}}
+
+    def test_find_and_show_print(self, env, capsys):
+        _songs(env)
+        _run(env, "find", "cheer")
+        assert capsys.readouterr().out.startswith("top40:3")
+        _run(env, "show", "top40:3")
+        assert "linked by no catalog song" in capsys.readouterr().out
+
+    def test_a_rebind_is_written_with_the_change(self, env, capsys):
+        # _seed's link records raw id 1 with title id 75; the live data now
+        # cites that song as id 5, so the link re-binds by the title id.
+        _seed(env)
+        _dataset(
+            env,
+            "top40",
+            {"5": {"artist": "The Scorpions ((GBR))", "title": "Hello Josephine"}},
+            [
+                {
+                    "axes": {"year": 1965, "week": 1},
+                    "size": 40,
+                    "entries": [
+                        {
+                            "position": 1,
+                            "songs": ["5"],
+                            "source_ids": {"top40.nl/title": "75"},
+                        }
+                    ],
+                }
+            ],
+        )
+        _run(env, "alias", "@1", "Scorpions - Hello Josefine", yes=True)
+        assert "also writing a re-bind: @1 top40 1 -> 5" in capsys.readouterr().out
+        assert _catalog(env)["songs"]["1"]["links"][0]["song"] == "5"
+
+    def test_rebinds_are_written_even_when_the_change_is_none(self, env, capsys):
+        _seed(env)  # @1 already has the alias Scorpions - Hello Josephine
+        _dataset(
+            env,
+            "top40",
+            {"5": {"artist": "The Scorpions ((GBR))", "title": "Hello Josephine"}},
+            [
+                {
+                    "axes": {"year": 1965, "week": 1},
+                    "size": 40,
+                    "entries": [
+                        {
+                            "position": 1,
+                            "songs": ["5"],
+                            "source_ids": {"top40.nl/title": "75"},
+                        }
+                    ],
+                }
+            ],
+        )
+        _run(env, "alias", "@1", "Scorpions - Hello Josephine", yes=True)
+        out = capsys.readouterr().out
+        assert "already has that alias" in out
+        assert "also writing a re-bind: @1 top40 1 -> 5" in out
+        assert _catalog(env)["songs"]["1"]["links"][0]["song"] == "5"
+
+    @pytest.mark.parametrize(
+        ("args", "message"),
+        [
+            (("merge", "top40:9", "top40:1"), "top40:9 is not in the current data"),
+            (("drop", "@7"), "no catalog song @7"),
+            (("alias", "@1", "No Dash"), "Artist - Title"),
+            (("merge", "top40:1"), "two references"),
+            (("find",), "find needs words"),
+            (("show", "top40:1", "top40:2"), "show takes one song"),
+            (("unalias", "top40:1", "A - B"), "unalias takes a catalog song"),
+            (("drop", "top40:1"), "drop takes one catalog song"),
+            (("unlink", "@1"), "unlink takes a catalog song and a raw song"),
+            (("check", "now"), "check takes no arguments"),
+            (("merge", "top40:1", "top40:1"), "two references"),
+            (("merge", "@1", "@1", "top40:1"), "named twice"),
+            (("merge", "top2000:5", "top40:1"), "top2000:5 is not in the current data"),
+        ],
+    )
+    def test_errors_write_nothing(self, env, args, message):
+        _songs(env)
+        with pytest.raises(ui.UserError, match=message):
+            _run(env, *args, yes=True)
+        assert not (env.data / "catalog.json").exists()
 
 
 class TestPreconditions:

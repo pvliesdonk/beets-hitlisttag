@@ -453,11 +453,16 @@ class LiveChart:
         self.songs = data.songs
         self.cited: set[str] = set()
         entry_ids: dict[str, list[dict[str, str]]] = {}
+        # raw id -> (axes, position) per citing entry, for find and show
+        self.placements: dict[str, list[tuple[dict[str, int], int]]] = {}
         for edition in data.editions:
             for entry in edition.entries:
                 for song in entry.songs:
                     self.cited.add(song.id)
                     entry_ids.setdefault(song.id, []).append(entry.source_ids)
+                    self.placements.setdefault(song.id, []).append(
+                        (dict(edition.axes), entry.position)
+                    )
         self.source_ids: dict[str, dict[str, str]] = {}
         for sid, mappings in entry_ids.items():
             agreed = {

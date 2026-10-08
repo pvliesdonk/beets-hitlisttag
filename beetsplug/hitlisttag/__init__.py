@@ -15,12 +15,15 @@ from beets.ui import CommonOptionsParser, Subcommand
 from beets.util import syspath
 from mediafile import MediaFile, UnreadableFileError
 
+from . import curate
 from .acquire import acquire_chart
 from .catalog import (
     CatalogError,
     CatalogIndex,
+    bind_links,
     catalog_path,
     check_catalog,
+    live_charts,
     read_catalog,
     stray_catalog_files,
     write_catalog_file,
@@ -32,6 +35,7 @@ from .charts import (
     _collapse_range,
     charts_field,
 )
+from .curate import CurationError
 from .dataset import DatasetError, read_dataset
 from .generate import RunReport, build_chart, merge_charts
 from .ingest import DiscoveryError, discover_ingestors
@@ -305,9 +309,33 @@ class HitlistTag(BeetsPlugin):
 
         cmd6 = Subcommand(
             "chartscatalog",
-            help="Check the song catalog against the chart dataset",
+            help="Check and curate the song catalog over the chart dataset",
         )
-        cmd6.parser.set_usage("%prog check")
+        cmd6.parser.set_usage(
+            "%prog check\n"
+            "       %prog find WORDS...\n"
+            "       %prog show REF\n"
+            "       %prog merge REFS... [--name 'ARTIST - TITLE'] [-y]\n"
+            "       %prog alias REF 'ARTIST - TITLE' [-y]\n"
+            "       %prog unlink @ID CHART:ID [-y]\n"
+            "       %prog unalias @ID 'ARTIST - TITLE' [-y]\n"
+            "       %prog drop @ID [-y]\n"
+            "REF is CHART:ID (a raw song), @ID (a catalog song) or words to search"
+        )
+        cmd6.parser.add_option(
+            "-y",
+            "--yes",
+            dest="yes",
+            action="store_true",
+            default=False,
+            help="apply without asking",
+        )
+        cmd6.parser.add_option(
+            "--name",
+            dest="name",
+            default=None,
+            help="merge: the song's display name, also added as an alias",
+        )
         cmd6.func = self.catalog_command
 
         return [cmd1, cmd2, cmd3, cmd4, cmd5, cmd6]
@@ -607,17 +635,183 @@ class HitlistTag(BeetsPlugin):
                 f"hitlisttag: acquisition failed for {', '.join(failed)}"
             )
 
+    _CATALOG_ACTIONS = (
+        "check",
+        "find",
+        "show",
+        "merge",
+        "alias",
+        "unlink",
+        "unalias",
+        "drop",
+    )
+
     def catalog_command(
         self, lib: Library, opts: CommonOptionsParser, args: list[str]
     ) -> None:
-        """Check the song catalog against the dataset (chartscatalog check).
+        """chartscatalog: check the song catalog, and curate it (#162).
 
-        Re-bound links are written back; dangling links and implicit alias
-        pairs are reported and make the command exit 1, so a routine run
-        notices.
+        A change shows its lines and asks before writing, once, unless -y;
+        re-binds found on the way are written with it. ``check`` writes
+        re-binds and exits 1 on dangling links or implicit alias pairs.
         """
-        if args != ["check"]:
-            raise ui.UserError("hitlisttag: chartscatalog takes one action: check")
+        if not args or args[0] not in self._CATALOG_ACTIONS:
+            raise ui.UserError(
+                "hitlisttag: chartscatalog takes one action: "
+                + ", ".join(self._CATALOG_ACTIONS)
+            )
+        action, rest = args[0], args[1:]
+        if action == "check":
+            if rest:
+                raise ui.UserError("hitlisttag: chartscatalog check takes no arguments")
+            self._catalog_check()
+            return
+        path, datasets, catalog = self._catalog_inputs()
+        report = bind_links(catalog, datasets, self._log)
+        live = live_charts(datasets)
+        yes = bool(getattr(opts, "yes", False))
+        try:
+            if action == "find":
+                for candidate in curate.find(catalog, live, rest):
+                    ui.print_(candidate.line)
+                return
+            if action == "show":
+                picked = self._resolve(rest, catalog, live, yes)
+                if picked is None:
+                    return
+                raws, songs = picked
+                if len(raws) + len(songs) != 1:
+                    raise CurationError("show takes one song")
+                for line in curate.describe(
+                    catalog,
+                    live,
+                    report,
+                    raw=raws[0] if raws else None,
+                    song=songs[0] if songs else None,
+                ):
+                    ui.print_(line)
+                return
+            change = self._curate(action, rest, opts, catalog, live, yes)
+        except CurationError as err:
+            raise ui.UserError(f"hitlisttag: {err}") from err
+        if change is not None:
+            self._apply(change, report, path, yes)
+
+    def _curate(self, action, rest, opts, catalog, live, yes):
+        """Build the Change for a curating action, or None if a pick was
+        cancelled."""
+        if action == "merge":
+            name_arg = getattr(opts, "name", None)
+            name = curate.parse_name(name_arg) if name_arg else None
+            picked = self._resolve(rest, catalog, live, yes)
+            if picked is None:
+                return None
+            return curate.merge(catalog, live, picked[0], picked[1], name)
+        if action in ("alias", "unalias"):
+            if len(rest) < 2:
+                raise CurationError(f"{action} takes a song and 'Artist - Title'")
+            name = curate.parse_name(rest[-1])
+            picked = self._resolve(rest[:-1], catalog, live, yes)
+            if picked is None:
+                return None
+            raws, songs = picked
+            if len(raws) + len(songs) != 1:
+                raise CurationError(f"{action} takes one song")
+            if action == "alias":
+                return curate.alias(
+                    catalog,
+                    live,
+                    name,
+                    song=songs[0] if songs else None,
+                    raw=raws[0] if raws else None,
+                )
+            if not songs:
+                raise CurationError("unalias takes a catalog song (@ID)")
+            return curate.unalias(catalog, songs[0], name)
+        picked = self._resolve(rest, catalog, live, yes)
+        if picked is None:
+            return None
+        raws, songs = picked
+        if action == "unlink":
+            if len(songs) != 1 or len(raws) != 1:
+                raise CurationError("unlink takes a catalog song and a raw song")
+            return curate.unlink(catalog, songs[0], raws[0])
+        if len(songs) != 1 or raws:
+            raise CurationError("drop takes one catalog song")
+        return curate.drop(catalog, songs[0])
+
+    _PICK_LIMIT = 20
+
+    def _resolve(self, args, catalog, live, yes):
+        """References from ``args``, with any words searched and picked from;
+        None if the person cancels the pick."""
+        raws, songs, words = curate.parse_refs(args, live, self.hitlists)
+        if not words:
+            return raws, songs
+        query = " ".join(words)
+        candidates = curate.find(catalog, live, words)
+        if not candidates:
+            raise CurationError(f"nothing matches {query!r}")
+        if yes:
+            if len(candidates) != 1:
+                raise CurationError(
+                    f"{query!r} matches {len(candidates)} songs; with -y a query "
+                    f"must match exactly one"
+                )
+            chosen = candidates
+        else:
+            if len(candidates) > self._PICK_LIMIT:
+                raise CurationError(
+                    f"{len(candidates)} songs match {query!r}; narrow the query "
+                    f"or use a reference"
+                )
+            for number, candidate in enumerate(candidates, 1):
+                ui.print_(f"{number:>3}. {candidate.line}")
+            answer = ui.input_("Pick by number (e.g. 1 3), or Enter to cancel:").strip()
+            if not answer:
+                ui.print_("cancelled; nothing written")
+                return None
+            try:
+                numbers = [int(n) for n in answer.split()]
+            except ValueError:
+                numbers = [0]
+            if not all(1 <= n <= len(candidates) for n in numbers):
+                raise CurationError(f"pick numbers from 1 to {len(candidates)}")
+            chosen = [candidates[n - 1] for n in numbers]
+        for candidate in chosen:
+            if candidate.raw is not None:
+                raws.append(candidate.raw)
+            else:
+                songs.append(candidate.song)
+        return raws, songs
+
+    def _apply(self, change, report, path, yes) -> None:
+        lines = list(change.lines)
+        for state in report.with_state("rebound"):
+            lines.append(
+                f"  also writing a re-bind: @{state.song_id} {state.link.chart} "
+                f"{state.previous} -> {state.link.song}"
+            )
+        for line in lines:
+            ui.print_(line)
+        # bind_links re-binds the shared link objects in place, so a change
+        # can't see them: a re-bind alone is still worth writing (#162 review).
+        if not change.changed and not report.changed:
+            ui.print_("nothing to change")
+            return
+        if not change.changed:
+            ui.print_("nothing to change but the re-binds")
+        if not yes and not ui.input_yn("Apply? (y/n)", require=True):
+            ui.print_("nothing written")
+            return
+        try:
+            write_catalog_file(change.catalog, path, self._log)
+        except CatalogError as err:
+            raise ui.UserError(f"hitlisttag: {err}") from err
+
+    def _catalog_inputs(self):
+        """The catalog's path, the strictly read datasets and the catalog; a
+        missing dataset_dir or a malformed file is a UserError."""
         dataset_dir = self.dataset_dir
         if dataset_dir is None:
             raise ui.UserError(
@@ -625,20 +819,28 @@ class HitlistTag(BeetsPlugin):
                 "set hitlisttag.dataset_dir in your beets config"
             )
         path = catalog_path(dataset_dir)
+        exists = dataset_dir.exists()
         try:
             datasets = (
                 read_dataset(dataset_dir, self.hitlists, self._log, strict=True)
-                if dataset_dir.exists()
+                if exists
                 else []
             )
             catalog = read_catalog(path, self._log)
         except (DatasetError, CatalogError) as err:
             raise ui.UserError(f"hitlisttag: {err}") from err
-        if dataset_dir.exists():
+        if exists:
             for stray in stray_catalog_files(dataset_dir, self._log):
                 self._log.warning(
                     "{0}: looks like a catalog file, but only {1} is read", stray, path
                 )
+        return path, datasets, catalog
+
+    def _catalog_check(self) -> None:
+        """chartscatalog check: re-bound links are written back; dangling
+        links and implicit alias pairs are reported and make the command exit
+        1, so a routine run notices."""
+        path, datasets, catalog = self._catalog_inputs()
         index = CatalogIndex.from_datasets(datasets, catalog, self._log)
         result = check_catalog(index, catalog)
         for line in result.lines:
