@@ -1080,6 +1080,23 @@ remain. `derived`.
   its scripts were not kept. `stated` (the decisions); `evidenced` (the
   counts: the PR for #183); `derived` (the consequence for held
   editions).
+- 2026-10-08 — #162's curation operations built: `chartscatalog find`,
+  `show`, `merge` (with `--name` as the fold), `alias`, `unlink`,
+  `unalias` and `drop`, each shown and confirmed before one write;
+  references are `chart:id`, `@id` or words to pick from. Catalog song
+  ids are never reused (`next_id`), and a raw song belongs to at most one
+  catalog song, so a catalog file still holding the old shared-link split
+  is refused at load, naming both songs (none was ever released; #187,
+  which also closed #173 and #175). Run on the owner's Top 40 and Top 100
+  re-split from the dev cache and the cached Top 2000: *Nini Rosso — Il
+  Silenzio* merged across three charts; *Unchained Melody*'s 1965 single
+  and 1990 *Ghost* re-release folded into one song (23 Top 40 weeks);
+  *Born in the USA* (Top 2000) merged with *Born In The U.S.A.* (Top 40,
+  Top 100), so a track in either spelling gets all three histories; a
+  drop and a re-merge took a new id; `check` ended clean. The double
+  A-side and shared-position cases hold at acquisition (#183), not as
+  catalog records. `stated` (the decisions, #162's brainstorm);
+  `evidenced` (the run: #162's PR).
 
 [n116]: https://github.com/pvliesdonk/beets-hitlisttag/issues/116#issuecomment-5967254464
 [n172]: https://github.com/pvliesdonk/beets-hitlisttag/issues/172#issuecomment-5995755414

@@ -262,8 +262,8 @@ names match several raw songs in such a chart, that chart is ambiguous, as
 in the plain match. A chart whose only link is dangling stays unresolved
 until you re-link it.
 `chartsgen` does not consult the catalog yet
-([#165](https://github.com/pvliesdonk/beets-hitlisttag/issues/165)); today
-only `chartscatalog check` reads it.
+([#165](https://github.com/pvliesdonk/beets-hitlisttag/issues/165)); the
+`chartscatalog` commands read and write it.
 
 **After a re-acquisition.** A link points at a raw id; a forced or
 from-scratch re-acquisition can re-mint ids or respell names. On every use
@@ -537,12 +537,31 @@ other media fields written either; use `beet write` for that.
 
 ### `chartscatalog`
 
-Checks the song catalog (see [The song catalog](#the-song-catalog))
-against the dataset; requires `dataset_dir` to be configured.
+Checks and curates the song catalog (see [The song catalog](#the-song-catalog));
+requires `dataset_dir` to be configured.
 
 ```
 beet chartscatalog check
+beet chartscatalog find WORDS...
+beet chartscatalog show REF
+beet chartscatalog merge REFS... [--name "ARTIST - TITLE"]
+beet chartscatalog alias REF "ARTIST - TITLE"
+beet chartscatalog unlink @ID CHART:ID
+beet chartscatalog unalias @ID "ARTIST - TITLE"
+beet chartscatalog drop @ID
 ```
+
+A reference is `CHART:ID` (a raw song, as `find` lists them), `@ID` (a
+catalog song), or words: words are searched, and you pick from the matches.
+`merge` makes the songs you name one song: spellings, a re-release, the same
+song in another chart. The first catalog song you name keeps its id; other
+catalog songs you name are absorbed, and a raw song another song links moves.
+`--name` sets the song's name and adds it as an alias, which is how a remix
+sharing its original's position is folded into the original (`merge
+top40:88 --name "Artist - Title"`). `alias` adds a spelling; `unlink`,
+`unalias` and `drop` undo a decision, after which the song matches as it did
+before. Every change is shown and asks before it is written; `-y` applies
+without asking. Catalog song ids are never reused.
 
 ## Keeping the dataset current
 
