@@ -246,6 +246,8 @@ def read_catalog(path: Path | str, log: logging.Logger) -> Catalog:
     if not isinstance(raw_songs, dict):
         raise CatalogError(f"{path}: 'songs' must be an object")
     songs = {sid: _parse_song(sid, val, path) for sid, val in raw_songs.items()}
+    if "next_id" in raw and raw["next_id"] is None:
+        raise CatalogError(f"{path}: 'next_id' must be a whole number, not null")
     try:
         return Catalog(songs, path, raw.get("next_id"))
     except ValueError as err:
@@ -511,32 +513,46 @@ def live_charts(datasets: list[HitlistData]) -> dict[str, LiveChart]:
     return {data.chart: LiveChart(data) for data in datasets}
 
 
+@dataclass
+class _Move:
+    """One link's outcome while binding: ``bound``, ``dangling``, or a
+    ``move`` to ``target``; a refused move is ``dangling`` with its
+    ``target`` kept and the song whose link holds it in ``holder``."""
+
+    sid: str
+    link: Link
+    state: str
+    target: str | None = None
+    holder: str | None = None
+
+
 def bind_links(
     catalog: Catalog, datasets: list[HitlistData], log: logging.Logger
 ) -> BindReport:
     """Check every link against the live data; re-bind in place where exactly
     one live raw song carries the recorded source ids (several are narrowed by
     the recorded name's match key), else exactly one has the recorded name's
-    match key. Two candidates at a step is dangling, and so is a candidate the
-    same catalog song already links, or one another catalog song links
-    (#173). A cited id that now holds another song (ids re-minted from
-    scratch) is re-bound like a missing one, never kept."""
+    match key. Two candidates at a step is dangling. A cited id that now holds
+    another song (ids re-minted from scratch) is re-bound like a missing one,
+    never kept.
+
+    Moves are decided together, so catalog order never matters: a move is
+    refused (the link dangles where it is) when its target is held by a link
+    that stays, bound or dangling, or is claimed by an earlier move, of this
+    catalog song or another (#173); refusing one can refuse another, so this
+    repeats until nothing changes. Then the moves are applied at once, so two
+    links trading ids (a from-scratch re-acquisition listing songs in another
+    order) both re-bind."""
     live = live_charts(datasets)
-    report = BindReport()
-    owners = {
-        (link.chart, link.song): sid
-        for sid, song in catalog.songs.items()
-        for link in song.links
-    }
+    moves: list[_Move] = []
     for sid, song in catalog.songs.items():
-        states = report.states.setdefault(sid, [])
         for link in song.links:
             chart = live.get(link.chart)
             if chart is None:
-                states.append(LinkState(sid, link, "dangling"))
+                moves.append(_Move(sid, link, "dangling"))
                 continue
             if link.song in chart.cited and chart.is_recorded_song(link):
-                states.append(LinkState(sid, link, "bound"))
+                moves.append(_Move(sid, link, "bound"))
                 continue
             found = chart.by_source_ids(link.source_ids) if link.source_ids else []
             if len(found) > 1:
@@ -544,30 +560,33 @@ def bind_links(
             elif not found:
                 found = chart.by_key.get(link.key(), [])
             if len(found) != 1:
-                states.append(LinkState(sid, link, "dangling"))
+                moves.append(_Move(sid, link, "dangling"))
                 continue
-            previous, new_id = link.song, found[0]
-            if any(
-                (other.chart, other.song) == (link.chart, new_id)
-                for other in song.links
-                if other is not link
-            ):
-                log.info(
-                    f"catalog: song {sid} link {link.chart} {previous} left "
-                    f"dangling: {new_id} is already linked by this song"
-                )
-                states.append(LinkState(sid, link, "dangling"))
+            moves.append(_Move(sid, link, "move", found[0]))
+    refused = True
+    while refused:
+        refused = False
+        staying = {(m.link.chart, m.link.song): m for m in moves if m.state != "move"}
+        claimed: dict[tuple[str, str], _Move] = {}
+        for move in moves:
+            if move.state != "move":
                 continue
-            holder = owners.get((link.chart, new_id))
-            if holder is not None and holder != sid:
-                log.info(
-                    f"catalog: song {sid} link {link.chart} {previous} left "
-                    f"dangling: {new_id} is linked by song {holder}"
-                )
-                states.append(
-                    LinkState(sid, link, "dangling", held_by=holder, candidate=new_id)
-                )
+            key = (move.link.chart, move.target)
+            other = staying.get(key) or claimed.get(key)
+            if other is not None:
+                move.state, move.holder = "dangling", other.sid
+                refused = True
                 continue
+            claimed[key] = move
+    report = BindReport()
+    for move in moves:
+        sid, link = move.sid, move.link
+        states = report.states.setdefault(sid, [])
+        if move.state == "bound":
+            states.append(LinkState(sid, link, "bound"))
+        elif move.state == "move":
+            chart = live[link.chart]
+            previous, new_id = link.song, move.target
             raw = chart.songs[new_id]
             link.song = new_id
             link.artist, link.title = raw.artist, raw.title
@@ -576,10 +595,25 @@ def bind_links(
                 f"catalog: song {sid} re-bound {link.chart} {previous} -> {new_id} "
                 f"({raw.artist} - {raw.title})"
             )
-            if owners.get((link.chart, previous)) == sid:
-                del owners[(link.chart, previous)]
-            owners[(link.chart, new_id)] = sid
             states.append(LinkState(sid, link, "rebound", previous))
+        elif move.holder == sid:
+            log.info(
+                f"catalog: song {sid} link {link.chart} {link.song} left "
+                f"dangling: {move.target} is already linked by this song"
+            )
+            states.append(LinkState(sid, link, "dangling"))
+        elif move.holder is not None:
+            log.info(
+                f"catalog: song {sid} link {link.chart} {link.song} left "
+                f"dangling: {move.target} is linked by song {move.holder}"
+            )
+            states.append(
+                LinkState(
+                    sid, link, "dangling", held_by=move.holder, candidate=move.target
+                )
+            )
+        else:
+            states.append(LinkState(sid, link, "dangling"))
     return report
 
 

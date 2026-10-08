@@ -240,6 +240,14 @@ class TestCopyOnChange:
         _, again = dropped.new_song("Nena", "99", (), [Link("c", "x", "N", "9")])
         assert again == "3"
 
+    def test_with_song_keeps_next_id(self):
+        catalog, sid = self._catalog().new_song(
+            "Nena", "99", (), [Link("c", "x", "N", "9")]
+        )
+        dropped = catalog.without_song(sid)
+        replaced = dropped.with_song(self._song("1", "Bangles", "Eternal Flame"))
+        assert replaced.next_id == 3
+
     def test_next_id_defaults_above_the_highest_numeric_id(self):
         songs = {"7": self._song("7", "A", "T"), "x": self._song("x", "B", "U")}
         assert Catalog(songs, Path("mem")).next_id == 8
@@ -413,7 +421,7 @@ class TestRead:
     def test_missing_next_id_defaults(self, tmp_path):
         assert read_catalog(_write(tmp_path, SAMPLE), log).next_id == 2
 
-    @pytest.mark.parametrize("bad", [1, 0, True, "5", 1.5])
+    @pytest.mark.parametrize("bad", [1, 0, True, "5", 1.5, None])
     def test_bad_next_id_names_the_file(self, tmp_path, bad):
         path = _write(tmp_path, {**SAMPLE, "next_id": bad})
         with pytest.raises(CatalogError, match=r"catalog\.json.*next_id"):
@@ -981,6 +989,78 @@ class TestBind:
         assert live_charts([data])["top40"].link("5") == Link(
             "top40", "5", "Scorpions", "Hello Josephine", {"top40.nl/title": "75"}
         )
+
+    def _two(self, one_links, two_links, order=("1", "2")):
+        songs = {
+            "1": CatalogSong("1", "A", "Song One", links=one_links),
+            "2": CatalogSong("2", "B", "Song Two", links=two_links),
+        }
+        return Catalog({sid: songs[sid] for sid in order}, Path("mem"))
+
+    def test_two_songs_converging_on_one_raw_song(self):
+        # Both stale links' only candidate is raw 5: the first re-binds, the
+        # second dangles naming it (never two songs on one raw song).
+        raw = Song("5", "A", "Song One")
+        data = _data(
+            "top40", [raw], [_week(1965, 1, (1, [raw], {"top40.nl/title": "75"}))]
+        )
+        ids = {"top40.nl/title": "75"}
+        catalog = self._two(
+            [Link("top40", "9", "A", "Song One", dict(ids))],
+            [Link("top40", "8", "A", "Song One", dict(ids))],
+        )
+        report = bind_links(catalog, [data], log)
+        assert [s.state for s in report.states["1"]] == ["rebound"]
+        [two] = report.states["2"]
+        assert (two.state, two.held_by, two.candidate) == ("dangling", "1", "5")
+        write_catalog_file(catalog, Path(self._tmp) / "catalog.json", log)
+
+    @pytest.fixture(autouse=True)
+    def _tmpdir(self, tmp_path):
+        self._tmp = tmp_path
+
+    @pytest.mark.parametrize("order", [("1", "2"), ("2", "1")])
+    def test_a_chain_of_moves_settles_in_one_pass(self, order):
+        # Song 1 needs raw 4, which song 2's stale link records but is
+        # leaving for raw 6. Catalog order must not matter.
+        a = Song("4", "A", "Song One")
+        b = Song("6", "B", "Song Two")
+        data = _data(
+            "top40",
+            [a, b],
+            [
+                _week(
+                    1965,
+                    1,
+                    (1, [a], {"top40.nl/title": "75"}),
+                    (2, [b], {"top40.nl/title": "76"}),
+                )
+            ],
+        )
+        catalog = self._two(
+            [Link("top40", "3", "A", "Song One", {"top40.nl/title": "75"})],
+            [Link("top40", "4", "B", "Song Two", {"top40.nl/title": "76"})],
+            order,
+        )
+        report = bind_links(catalog, [data], log)
+        assert [s.state for s in report.all()] == ["rebound", "rebound"]
+        assert (catalog.songs["1"].links[0].song, catalog.songs["2"].links[0].song) == (
+            "4",
+            "6",
+        )
+
+    def test_no_shared_key_is_not_agreement(self):
+        # The live song carries only a subtitle id, the link only a title
+        # id: they share no key, so the ids say nothing and the name decides.
+        raw = Song("7", "Someone Else", "Another Tune")
+        data = _data(
+            "top40", [raw], [_week(1965, 1, (1, [raw], {"top40.nl/subtitle": "A"}))]
+        )
+        link = Link(
+            "top40", "5", "Scorpions", "Hello Josephine", {"top40.nl/title": "75"}
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
 
 
 class TestResolve:
@@ -1613,6 +1693,32 @@ class TestDurability:
             ("top2000", "bound"),
             ("top2000", "dangling"),
         }
+
+    def test_survives_from_scratch_reacquisition_in_another_order(self, tmp_path):
+        # The source now lists Nena first, so from scratch the two Top 40 ids
+        # swap: each link's only candidate is the id the other is leaving.
+        data_dir, _ = self._seed(tmp_path)
+        for name in ("top40.json", "top2000.json"):
+            (data_dir / name).unlink()
+        swapped = [
+            _acquired(
+                {"year": 1965, "week": 1},
+                ("Nena", "99 Luftballons", {"top40.nl/title": "900"}),
+                ("The Scorpions ((GBR))", "Hello Josephine", {"top40.nl/title": "75"}),
+            )
+        ]
+        _acquire(data_dir, None, "top40", swapped)
+        _acquire(data_dir, None, "top2000", self.V1_TOP2000)
+        live = read_dataset(data_dir, HITLISTS, log)
+        catalog = read_catalog(catalog_path(data_dir), log)
+        index = CatalogIndex.from_datasets(live, catalog, log)
+        assert index.bind_report.with_state("dangling") == []
+        scorpions, nena = _history(index)
+        assert scorpions.placements["top40"] == [
+            Placement({"year": 1965, "week": 1}, 2, 2)
+        ]
+        assert nena.placements["top40"] == [Placement({"year": 1965, "week": 1}, 1, 2)]
+        write_catalog_file(catalog, catalog.source, log)
 
 
 class TestCheck:
