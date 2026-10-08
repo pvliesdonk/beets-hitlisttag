@@ -407,12 +407,16 @@ def write_catalog_file(catalog: Catalog, path: Path, log: logging.Logger) -> Non
 @dataclass
 class LinkState:
     """One link's state against the live data; ``previous`` is the raw id a
-    re-bound link had before."""
+    re-bound link had before; for a link left dangling because its only
+    candidate is another catalog song's raw song (#173), ``candidate`` is
+    that raw id and ``held_by`` the song linking it."""
 
     song_id: str
     link: Link
     state: str  # "bound", "rebound" or "dangling"
     previous: str | None = None
+    held_by: str | None = None
+    candidate: str | None = None
 
 
 @dataclass
@@ -430,12 +434,20 @@ class BindReport:
         return any(s.state == "rebound" for s in self.all())
 
 
-class _LiveChart:
+def _carries(live: Mapping[str, str], recorded: Mapping[str, str]) -> bool:
+    """Live ids carry recorded ones when they share a key and every shared
+    key has the same value. No shared key is not agreement (#175)."""
+    shared = recorded.keys() & live.keys()
+    return bool(shared) and all(live[key] == recorded[key] for key in shared)
+
+
+class LiveChart:
     """What binding needs from one chart's live data: which raw songs an
     edition cites, their source ids (the keys, with their values, on which
     every citing entry agrees) and their names by match key."""
 
     def __init__(self, data: HitlistData):
+        self.chart = data.chart
         self.songs = data.songs
         self.cited: set[str] = set()
         entry_ids: dict[str, list[dict[str, str]]] = {}
@@ -461,29 +473,42 @@ class _LiveChart:
 
     def by_source_ids(self, recorded: dict[str, str]) -> list[str]:
         return [
-            sid
-            for sid, live in self.source_ids.items()
-            if all(live.get(k) == v for k, v in recorded.items())
+            sid for sid, live in self.source_ids.items() if _carries(live, recorded)
         ]
 
     def is_recorded_song(self, link: Link) -> bool:
         """The live raw song at the link's id is still the song the link
-        recorded. With source ids recorded, its own carry them and, where
-        another live cited raw song carries them too (a title id shared by
-        cover versions), its name has the recorded name's match key as well.
-        With none recorded, the name alone decides."""
+        recorded. Where the link's ids and the live ones share a key, they
+        must agree on every shared key (#175: a subtitle id that changed with
+        a re-entry no longer counts), and where another live cited raw song
+        carries them too (a title id shared by cover versions), its name has
+        the recorded name's match key as well. With no shared key, the name
+        alone decides."""
         raw = self.songs[link.song]
         name_matches = (match_key(raw.artist), match_key(raw.title)) == link.key()
-        if not link.source_ids:
-            return name_matches
         live = self.source_ids.get(link.song, {})
-        if not all(live.get(k) == v for k, v in link.source_ids.items()):
+        if not link.source_ids.keys() & live.keys():
+            return name_matches
+        if not _carries(live, link.source_ids):
             return False
         return name_matches or len(self.by_source_ids(link.source_ids)) == 1
+
+    def link(self, sid: str) -> Link:
+        """A link to raw song ``sid`` as it is now: its published name and the
+        source ids every entry citing it agrees on."""
+        raw = self.songs[sid]
+        return Link(
+            self.chart, sid, raw.artist, raw.title, dict(self.source_ids.get(sid, {}))
+        )
 
     def name_key(self, sid: str) -> tuple[str, str]:
         raw = self.songs[sid]
         return (match_key(raw.artist), match_key(raw.title))
+
+
+def live_charts(datasets: list[HitlistData]) -> dict[str, LiveChart]:
+    """Each chart's live data, by chart name."""
+    return {data.chart: LiveChart(data) for data in datasets}
 
 
 def bind_links(
@@ -493,10 +518,16 @@ def bind_links(
     one live raw song carries the recorded source ids (several are narrowed by
     the recorded name's match key), else exactly one has the recorded name's
     match key. Two candidates at a step is dangling, and so is a candidate the
-    same catalog song already links. A cited id that now holds another song
-    (ids re-minted from scratch) is re-bound like a missing one, never kept."""
-    live = {data.chart: _LiveChart(data) for data in datasets}
+    same catalog song already links, or one another catalog song links
+    (#173). A cited id that now holds another song (ids re-minted from
+    scratch) is re-bound like a missing one, never kept."""
+    live = live_charts(datasets)
     report = BindReport()
+    owners = {
+        (link.chart, link.song): sid
+        for sid, song in catalog.songs.items()
+        for link in song.links
+    }
     for sid, song in catalog.songs.items():
         states = report.states.setdefault(sid, [])
         for link in song.links:
@@ -527,6 +558,16 @@ def bind_links(
                 )
                 states.append(LinkState(sid, link, "dangling"))
                 continue
+            holder = owners.get((link.chart, new_id))
+            if holder is not None and holder != sid:
+                log.info(
+                    f"catalog: song {sid} link {link.chart} {previous} left "
+                    f"dangling: {new_id} is linked by song {holder}"
+                )
+                states.append(
+                    LinkState(sid, link, "dangling", held_by=holder, candidate=new_id)
+                )
+                continue
             raw = chart.songs[new_id]
             link.song = new_id
             link.artist, link.title = raw.artist, raw.title
@@ -535,6 +576,9 @@ def bind_links(
                 f"catalog: song {sid} re-bound {link.chart} {previous} -> {new_id} "
                 f"({raw.artist} - {raw.title})"
             )
+            if owners.get((link.chart, previous)) == sid:
+                del owners[(link.chart, previous)]
+            owners[(link.chart, new_id)] = sid
             states.append(LinkState(sid, link, "rebound", previous))
     return report
 
@@ -754,10 +798,15 @@ def check_catalog(index: CatalogIndex, catalog: Catalog) -> CheckResult:
         )
     for state in dangling:
         song = catalog.songs[state.song_id]
+        held = (
+            f"; {state.link.chart} {state.candidate} is linked by @{state.held_by}"
+            if state.held_by is not None
+            else ""
+        )
         lines.append(
             f"dangling: song {state.song_id} ({song.artist} - {song.title}) "
             f"{state.link.chart} {state.link.song} "
-            f"(recorded: {state.link.artist} - {state.link.title})"
+            f"(recorded: {state.link.artist} - {state.link.title}{held})"
         )
     for pair in index.implicit_pairs:
         raws = " and ".join(f"{chart} {rid}" for chart, rid in pair.raws)

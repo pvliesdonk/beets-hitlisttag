@@ -151,7 +151,9 @@ from that dataset. `stated`.
   matching could make configurable (`derived`).
 - **Raw data is disposable; curation is precious.** Acquired editions are
   re-acquirable at will; hand-curation (aliases, entry–song links, merges,
-  splits) must survive full re-acquisition. `derived`.
+  splits) must survive full re-acquisition. `derived`. *Corrected
+  (2026-10-08):* splits are acquisition's since #183; curation merges,
+  folds and aliases. `derived`.
 - **The existing `CHARTS` tag format is the unchanged output contract.**
   Generated tags must be indistinguishable from externally produced ones to
   the rest of the plugin. When generating, a chart's object in a track's tag
