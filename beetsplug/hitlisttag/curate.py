@@ -17,7 +17,7 @@ it did before. Splitting a multi-song entry is acquisition's (#183).
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
@@ -98,6 +98,40 @@ def _new_alias(name: tuple[str, str]) -> Alias:
     return new
 
 
+def _no_takeover(
+    catalog: Catalog,
+    live: Mapping[str, LiveChart],
+    sid: str,
+    new_aliases: list[Alias],
+    new_links: list[Link],
+) -> None:
+    """An explicit alias wins over a linked raw song's name (resolution's
+    order), so a new alias of song ``sid`` spelled like a raw song another
+    catalog song links, or a new link of ``sid`` spelled like another song's
+    alias, would take that song's tracks: refuse it."""
+    keys = {alias.key(): alias for alias in new_aliases}
+    for other_id, other in catalog.songs.items():
+        if other_id == sid:
+            continue
+        for ln in other.links:
+            chart = live.get(ln.chart)
+            if chart is None or ln.song not in chart.cited:
+                continue
+            clash = keys.get(chart.name_key(ln.song))
+            if clash is not None:
+                raise CurationError(
+                    f"{clash.artist} - {clash.title} is how {ln.chart}:{ln.song} "
+                    f"is spelled, which @{other_id} links"
+                )
+    for ln in new_links:
+        owner = catalog.alias_owner(live[ln.chart].name_key(ln.song))
+        if owner is not None and owner != sid:
+            raise CurationError(
+                f"{ln.chart}:{ln.song} ({ln.artist} - {ln.title}) is spelled like "
+                f"@{owner}'s alias"
+            )
+
+
 def merge(
     catalog: Catalog,
     live: Mapping[str, LiveChart],
@@ -107,13 +141,19 @@ def merge(
 ) -> Change:
     """Make the named raw songs and catalog songs one catalog song.
 
-    The first catalog song named is the target; with none, a new song is
-    minted, displayed as ``name`` or else as its first raw song. Other
-    catalog songs named are absorbed (their links and aliases move, they are
-    dropped). A raw song another catalog song links moves; a song left with
-    no links is dropped. ``name`` sets the display name and adds it as an
-    alias: the fold of a remix bundle into its base song.
+    The first catalog song named is the target; with none, the catalog song
+    already linking the first named raw song that has one, so running a
+    merge again changes nothing; with none of those, a new song is minted,
+    displayed as ``name`` or else as its first raw song. Other catalog songs
+    named are absorbed (their links and aliases move, they are dropped). A
+    raw song another catalog song links moves; a song left with no links is
+    dropped and its aliases come along. ``name`` sets the display name and
+    adds it as an alias: the fold of a remix bundle into its base song. A
+    new alias spelled like another song's raw song, or a new link spelled
+    like another song's alias, is refused (it would take that song's
+    tracks).
     """
+    raws = list(dict.fromkeys(raws))
     if len(raws) + len(songs) < (1 if name else 2):
         raise CurationError("merge needs two references, or one and --name")
     if len(set(songs)) != len(songs):
@@ -123,6 +163,10 @@ def merge(
     links = [_raw_link(live, chart, raw_id) for chart, raw_id in raws]
     new_alias = _new_alias(name) if name else None
 
+    if not songs:
+        held = (catalog.link_owner(chart, raw_id) for chart, raw_id in raws)
+        songs = [next((sid for sid in held if sid is not None), None)] if raws else []
+        songs = [sid for sid in songs if sid is not None]
     target = catalog.songs[songs[0]] if songs else None
     aliases = list(target.aliases) if target else []
     target_links = list(target.links) if target else []
@@ -157,7 +201,13 @@ def merge(
                 suffix = f"  (moves from @{holder})"
             else:
                 work = work.without_song(holder)
-                suffix = f"  (moves from @{holder}; @{holder} is dropped)"
+                aliases += held.aliases
+                kept = (
+                    f", its {_count(len(held.aliases), 'alias', 'aliases')} kept"
+                    if held.aliases
+                    else ""
+                )
+                suffix = f"  (moves from @{holder}; @{holder} is dropped{kept})"
         target_links.append(link)
         lines.append(f"  link {ref:<12} {link.artist} - {link.title}{suffix}")
     if new_alias is not None:
@@ -175,6 +225,7 @@ def merge(
         with _rules():
             work, sid = work.new_song(display[0], display[1], distinct, target_links)
         header = f"merge into new song @{sid} ({display[0]} - {display[1]}):"
+        target_id = sid
     else:
         display = name or (target.artist, target.title)
         song = CatalogSong(
@@ -183,6 +234,8 @@ def merge(
         with _rules():
             work = work.with_song(song)
         header = f"merge into {_label(target)}:"
+        target_id = target.id
+    _no_takeover(work, live, target_id, [new_alias] if new_alias else [], links)
     return _change(catalog, work, [header, *lines])
 
 
@@ -202,6 +255,7 @@ def alias(
         if song is None:
             with _rules():
                 work, sid = catalog.new_song(link.artist, link.title, [new], [link])
+            _no_takeover(work, live, sid, [new], [link])
             return _change(
                 catalog,
                 work,
@@ -216,6 +270,7 @@ def alias(
         return Change(catalog, [f"{_label(target)} already has that alias"], False)
     with _rules():
         work = catalog.with_song(replace(target, aliases=(*target.aliases, new)))
+    _no_takeover(work, live, target.id, [new], [])
     return _change(
         catalog, work, [f"alias {_label(target)}:", f"  add {name[0]} - {name[1]}"]
     )
@@ -270,17 +325,18 @@ _SONG_REF = re.compile(r"@(\d+)")
 
 
 def parse_refs(
-    args: list[str], live: Mapping[str, LiveChart]
+    args: list[str], live: Mapping[str, LiveChart], charts: Iterable[str] = ()
 ) -> tuple[list[tuple[str, str]], list[str], list[str]]:
     """Raw refs (``chart:id`` for a chart in the data), catalog song refs
     (``@id``) and the remaining words, each in argument order."""
+    known = set(charts)
     raws: list[tuple[str, str]] = []
     songs: list[str] = []
     words: list[str] = []
     for arg in args:
         raw = _RAW_REF.fullmatch(arg)
         song = _SONG_REF.fullmatch(arg)
-        if raw and raw.group(1) in live:
+        if raw and (raw.group(1) in live or raw.group(1) in known):
             raws.append((raw.group(1), raw.group(2)))
         elif song:
             songs.append(song.group(1))
@@ -326,6 +382,11 @@ def find(
     wanted = _tokens(*words)
     if not wanted:
         raise CurationError("find needs words to look for")
+    owners = {
+        (ln.chart, ln.song): sid
+        for sid, song in catalog.songs.items()
+        for ln in song.links
+    }
     out: list[Candidate] = []
     for chart_name in sorted(live):
         chart = live[chart_name]
@@ -334,7 +395,7 @@ def find(
             if not wanted <= _tokens(raw.artist, raw.title):
                 continue
             ref = f"{chart_name}:{raw_id}"
-            owner = catalog.link_owner(chart_name, raw_id)
+            owner = owners.get((chart_name, raw_id))
             owned = f"  → @{owner}" if owner else ""
             line = f"{ref:<13} {raw.artist} - {raw.title}  {run(chart, raw_id)}{owned}"
             out.append(Candidate(ref, (chart_name, raw_id), None, line))
@@ -371,6 +432,9 @@ def describe(
             how = (
                 f"re-bound from {state.previous}"
                 if state.state == "rebound"
+                else f"dangling ({link.chart} {state.candidate} is linked by "
+                f"@{state.held_by})"
+                if state.held_by is not None
                 else state.state
             )
             lines.append(

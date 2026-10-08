@@ -554,14 +554,19 @@ beet chartscatalog drop @ID
 A reference is `CHART:ID` (a raw song, as `find` lists them), `@ID` (a
 catalog song), or words: words are searched, and you pick from the matches.
 `merge` makes the songs you name one song: spellings, a re-release, the same
-song in another chart. The first catalog song you name keeps its id; other
-catalog songs you name are absorbed, and a raw song another song links moves.
-`--name` sets the song's name and adds it as an alias, which is how a remix
-sharing its original's position is folded into the original (`merge
-top40:88 --name "Artist - Title"`). `alias` adds a spelling; `unlink`,
-`unalias` and `drop` undo a decision, after which the song matches as it did
-before. Every change is shown and asks before it is written; `-y` applies
-without asking. Catalog song ids are never reused.
+song in another chart. The first catalog song you name keeps its id; without
+one, the catalog song that already links one of the raw songs does, so
+running a merge again changes nothing. Other catalog songs you name are
+absorbed; a raw song another song links moves, and a song left with no links
+is dropped, its aliases kept. `--name` sets the song's name and adds it as an
+alias, which is how a remix sharing its original's position is folded into
+the original (`merge top40:88 --name "Artist - Title"`). `alias` adds a
+spelling; `unlink`, `unalias` and `drop` undo a decision, after which the
+song matches as it did before. An alias spelled like a raw song another
+catalog song links is refused, since it would take that song's tracks.
+Every change is shown and asks before it is written; `-y` applies without
+asking, and then words must match exactly one song (without `-y`, you pick
+from at most 20 matches). Catalog song ids are never reused.
 
 ## Keeping the dataset current
 

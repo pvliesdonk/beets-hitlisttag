@@ -745,7 +745,7 @@ class HitlistTag(BeetsPlugin):
     def _resolve(self, args, catalog, live, yes):
         """References from ``args``, with any words searched and picked from;
         None if the person cancels the pick."""
-        raws, songs, words = curate.parse_refs(args, live)
+        raws, songs, words = curate.parse_refs(args, live, self.hitlists)
         if not words:
             return raws, songs
         query = " ".join(words)
@@ -794,9 +794,13 @@ class HitlistTag(BeetsPlugin):
             )
         for line in lines:
             ui.print_(line)
-        if not change.changed:
+        # bind_links re-binds the shared link objects in place, so a change
+        # can't see them: a re-bind alone is still worth writing (#162 review).
+        if not change.changed and not report.changed:
             ui.print_("nothing to change")
             return
+        if not change.changed:
+            ui.print_("nothing to change but the re-binds")
         if not yes and not ui.input_yn("Apply? (y/n)", require=True):
             ui.print_("nothing written")
             return

@@ -470,6 +470,32 @@ class TestCurate:
         assert "also writing a re-bind: @1 top40 1 -> 5" in capsys.readouterr().out
         assert _catalog(env)["songs"]["1"]["links"][0]["song"] == "5"
 
+    def test_rebinds_are_written_even_when_the_change_is_none(self, env, capsys):
+        _seed(env)  # @1 already has the alias Scorpions - Hello Josephine
+        _dataset(
+            env,
+            "top40",
+            {"5": {"artist": "The Scorpions ((GBR))", "title": "Hello Josephine"}},
+            [
+                {
+                    "axes": {"year": 1965, "week": 1},
+                    "size": 40,
+                    "entries": [
+                        {
+                            "position": 1,
+                            "songs": ["5"],
+                            "source_ids": {"top40.nl/title": "75"},
+                        }
+                    ],
+                }
+            ],
+        )
+        _run(env, "alias", "@1", "Scorpions - Hello Josephine", yes=True)
+        out = capsys.readouterr().out
+        assert "already has that alias" in out
+        assert "also writing a re-bind: @1 top40 1 -> 5" in out
+        assert _catalog(env)["songs"]["1"]["links"][0]["song"] == "5"
+
     @pytest.mark.parametrize(
         ("args", "message"),
         [
@@ -478,6 +504,14 @@ class TestCurate:
             (("alias", "@1", "No Dash"), "Artist - Title"),
             (("merge", "top40:1"), "two references"),
             (("find",), "find needs words"),
+            (("show", "top40:1", "top40:2"), "show takes one song"),
+            (("unalias", "top40:1", "A - B"), "unalias takes a catalog song"),
+            (("drop", "top40:1"), "drop takes one catalog song"),
+            (("unlink", "@1"), "unlink takes a catalog song and a raw song"),
+            (("check", "now"), "check takes no arguments"),
+            (("merge", "top40:1", "top40:1"), "two references"),
+            (("merge", "@1", "@1", "top40:1"), "named twice"),
+            (("merge", "top2000:5", "top40:1"), "top2000:5 is not in the current data"),
         ],
     )
     def test_errors_write_nothing(self, env, args, message):

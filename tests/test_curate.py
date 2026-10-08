@@ -11,6 +11,8 @@ from beetsplug.hitlisttag.catalog import (
     Alias,
     Catalog,
     CatalogIndex,
+    CatalogSong,
+    Link,
     bind_links,
     live_charts,
 )
@@ -113,30 +115,52 @@ class TestMerge:
         assert change.lines[0] == "merge into @1 (Pretend Act - Made Up Tune):"
 
     def _two_songs(self):
-        """@1 links top40:1 (alias Pretend Act - Made Up Tune); @2 links
-        top40:2 (alias Someone - Else). Made-Up Tune shares @1's match key,
-        so @2 gets its own spelling through alias."""
+        """@1 links top40:1 (alias Pretend Act - Made Up Tune); @2 links the
+        live version top40:7 (alias Someone - Else). Not top40:2: Made-Up
+        Tune is spelled like @1's alias, and linking it elsewhere would hand
+        @1's tracks over."""
         one = merge(
             EMPTY, LIVE, [("top40", "1")], [], ("Pretend Act", "Made Up Tune")
         ).catalog
-        return alias(one, LIVE, ("Someone", "Else"), raw=("top40", "2")).catalog
+        return alias(one, LIVE, ("Someone", "Else"), raw=("top40", "7")).catalog
 
     def test_a_raw_song_another_song_links_moves_and_an_emptied_song_drops(self):
-        change = merge(self._two_songs(), LIVE, [("top40", "2")], ["1"])
+        change = merge(self._two_songs(), LIVE, [("top40", "7")], ["1"])
         assert set(change.catalog.songs) == {"1"}
         assert any("moves from @2; @2 is dropped" in line for line in change.lines)
 
     def test_a_moved_link_leaves_the_holders_other_links(self):
-        # @2 links top40:2 and top40:7; taking top40:2 leaves it top40:7.
+        # @2 links top40:7 and top40:3; taking top40:7 leaves it top40:3.
         one = merge(
             EMPTY, LIVE, [("top40", "1")], [], ("Pretend Act", "Made Up Tune")
         ).catalog
-        two = merge(one, LIVE, [("top40", "2"), ("top40", "7")], []).catalog
-        change = merge(two, LIVE, [("top40", "2")], ["1"])
+        two = merge(one, LIVE, [("top40", "7"), ("top40", "3")], []).catalog
+        change = merge(two, LIVE, [("top40", "7")], ["1"])
         assert [(ln.chart, ln.song) for ln in change.catalog.songs["2"].links] == [
-            ("top40", "7")
+            ("top40", "3")
         ]
         assert any(line.endswith("(moves from @2)") for line in change.lines)
+
+    def test_without_an_id_the_song_holding_a_named_raw_song_is_the_target(self):
+        first = merge(EMPTY, LIVE, [("top40", "1"), ("top40", "2")], []).catalog
+        again = merge(first, LIVE, [("top40", "1"), ("top40", "2")], [])
+        assert not again.changed and set(again.catalog.songs) == {"1"}
+        grown = merge(first, LIVE, [("top2000", "1"), ("top40", "1")], [])
+        assert set(grown.catalog.songs) == {"1"}
+        assert len(grown.catalog.songs["1"].links) == 3
+        assert grown.lines[0] == "merge into @1 (Pretend Act - Made Up Tune):"
+
+    def test_an_emptied_holders_aliases_come_along(self):
+        change = merge(self._two_songs(), LIVE, [("top40", "7")], ["1"])
+        keys = [a.key() for a in change.catalog.songs["1"].aliases]
+        assert keys == [("pretend act", "made up tune"), ("someone", "else")]
+        assert any("@2 is dropped, its 1 alias kept" in line for line in change.lines)
+
+    def test_a_name_already_an_alias_is_not_added_twice(self):
+        name = ("Pretend Act", "Made Up Tune")
+        named = merge(EMPTY, LIVE, [("top40", "1")], [], name).catalog
+        again = merge(named, LIVE, [("top40", "2")], ["1"], name).catalog
+        assert len(again.songs["1"].aliases) == 1
 
     def test_absorbing_a_catalog_song_moves_its_links_and_aliases(self):
         change = merge(self._two_songs(), LIVE, [], ["1", "2"])
@@ -144,7 +168,7 @@ class TestMerge:
         song = change.catalog.songs["1"]
         assert [(ln.chart, ln.song) for ln in song.links] == [
             ("top40", "1"),
-            ("top40", "2"),
+            ("top40", "7"),
         ]
         assert [a.key() for a in song.aliases] == [
             ("pretend act", "made up tune"),
@@ -188,6 +212,35 @@ class TestMerge:
         with pytest.raises(CurationError, match="belongs to songs"):
             merge(one, LIVE, [("top40", "7")], [], ("Pretend Act", "Made Up Tune"))
         assert set(one.songs) == {"1"}
+
+
+class TestNoTakeover:
+    """An explicit alias wins over a linked raw song's name, so one spelled
+    like another song's raw song would hand that song's tracks over."""
+
+    def _two(self):
+        born = merge(EMPTY, LIVE, [("top40", "1"), ("top40", "2")], []).catalog
+        return alias(born, LIVE, ("Other Act", "Cheers"), raw=("top40", "3")).catalog
+
+    def test_an_alias_spelled_like_another_songs_raw_song(self):
+        with pytest.raises(
+            CurationError, match="how top40:1 is spelled, which @1 links"
+        ):
+            alias(self._two(), LIVE, ("Pretend Act", "Made Up Tune"), song="2")
+
+    def test_a_name_spelled_like_another_songs_raw_song(self):
+        with pytest.raises(
+            CurationError, match="how top40:1 is spelled, which @1 links"
+        ):
+            merge(self._two(), LIVE, [], ["2"], ("Pretend Act", "Made-Up Tune"))
+
+    def test_linking_a_raw_song_spelled_like_another_songs_alias(self):
+        named = alias(EMPTY, LIVE, ("Duo Act", "Side A"), raw=("top40", "1")).catalog
+        with pytest.raises(
+            CurationError,
+            match=r"top40:5 \(Duo Act - Side A\) is spelled like @1's alias",
+        ):
+            merge(named, LIVE, [("top40", "5"), ("top40", "6")], [])
 
 
 class TestAlias:
@@ -403,3 +456,37 @@ class TestDescribe:
             "top40:5 Duo Act - Side A  1970, 1 edition, best 3",
             "  linked by no catalog song",
         ]
+
+
+class TestFindDetails:
+    def test_best_is_the_highest_position(self):
+        tune = Song("1", "Steady Act", "Long Runner")
+        data = _data(
+            "top40", [tune], [_week(1970, 1, (5, [tune])), _week(1970, 2, (2, [tune]))]
+        )
+        [candidate] = find(EMPTY, live_charts([data]), ["long", "runner"])
+        assert candidate.line.endswith("1970, 2 editions, best 2")
+
+    def test_catalog_songs_match_through_aliases(self):
+        catalog = alias(
+            EMPTY, LIVE, ("Zany Name", "Odd Tune"), raw=("top40", "1")
+        ).catalog
+        assert [c.ref for c in find(catalog, LIVE, ["zany"])] == ["@1"]
+
+    def test_show_names_who_holds_a_dangling_links_candidate(self):
+        raw = Song("5", "A", "Song One")
+        data = _data("top40", [raw], [_week(1965, 1, (1, [raw]))])
+        catalog = Catalog(
+            {
+                "1": CatalogSong(
+                    "1", "A", "Song One", links=[Link("top40", "9", "A", "Song One")]
+                ),
+                "2": CatalogSong(
+                    "2", "A", "Song One!", links=[Link("top40", "5", "A", "Song One")]
+                ),
+            },
+            Path("mem"),
+        )
+        report = bind_links(catalog, [data], log)
+        lines = describe(catalog, live_charts([data]), report, song="1")
+        assert lines[-1].endswith("dangling (top40 5 is linked by @2)")

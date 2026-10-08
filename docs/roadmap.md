@@ -1093,7 +1093,10 @@ remain. `derived`.
   and 1990 *Ghost* re-release folded into one song (23 Top 40 weeks);
   *Born in the USA* (Top 2000) merged with *Born In The U.S.A.* (Top 40,
   Top 100), so a track in either spelling gets all three histories; a
-  drop and a re-merge took a new id; `check` ended clean. The double
+  drop and a re-merge took a new id; re-running a merge changed nothing,
+  and an alias spelled like another song's raw song was refused (it would
+  take that song's tracks; `check` doesn't report one yet, #188);
+  `check` ended clean. The double
   A-side and shared-position cases hold at acquisition (#183), not as
   catalog records. `stated` (the decisions, #162's brainstorm);
   `evidenced` (the run: #162's PR).
