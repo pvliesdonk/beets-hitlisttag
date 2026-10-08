@@ -120,10 +120,19 @@ class TestModel:
         assert catalog.alias_owner(("bangles", "x")) == "1"
         assert catalog.alias_owner(("bangles", "y")) is None
 
-    def test_a_split_may_link_one_raw_song_from_two_songs(self):
-        a = CatalogSong("1", "A", "T", links=[Link("c", "9", "A / B", "T ; U")])
-        b = CatalogSong("2", "B", "U", links=[Link("c", "9", "A / B", "T ; U")])
-        Catalog({"1": a, "2": b}, Path("mem"))  # no error
+    def test_a_raw_song_belongs_to_one_catalog_song(self):
+        # #162 decision 8: a split is acquisition's (#183), so two catalog
+        # songs never share a raw song.
+        a = CatalogSong("1", "A", "T", links=[Link("c", "9", "A / B", "T")])
+        b = CatalogSong("2", "B", "T", links=[Link("c", "9", "A / B", "T")])
+        with pytest.raises(ValueError, match="c '9' is linked by songs '1' and '2'"):
+            Catalog({"1": a, "2": b}, Path("mem"))
+
+    def test_link_owner(self):
+        a = CatalogSong("1", "A", "T", links=[Link("c", "9", "A", "T")])
+        catalog = Catalog({"1": a}, Path("mem"))
+        assert catalog.link_owner("c", "9") == "1"
+        assert catalog.link_owner("c", "8") is None
 
     def test_an_alias_that_normalizes_to_nothing_claims_no_key(self):
         a = CatalogSong("1", "A", "T", [Alias("Nena", "?")], [Link("c", "1", "A", "T")])
@@ -177,15 +186,6 @@ class TestCopyOnChange:
         assert set(catalog.songs) == {"1"}
         assert catalog.alias_owner(("nena", "99")) is None
 
-    def test_with_song_adds_and_leaves_the_original_alone(self):
-        catalog = self._catalog()
-        bigger = catalog.with_song(self._song("2", "Nena", "99", ("Nena", "99")))
-        assert set(bigger.songs) == {"1", "2"}
-        assert bigger.alias_owner(("nena", "99")) == "2"
-        assert set(catalog.songs) == {"1"}
-        assert catalog.alias_owner(("nena", "99")) is None
-        assert bigger.source == catalog.source
-
     def test_with_song_replaces_a_song_with_the_same_id(self):
         catalog = self._catalog()
         changed = catalog.with_song(
@@ -195,20 +195,59 @@ class TestCopyOnChange:
         assert changed.alias_owner(("bangles", "ef")) is None
         assert catalog.alias_owner(("bangles", "ef")) == "1"
 
-    def test_with_song_refuses_a_conflicting_alias(self):
+    def test_new_song_takes_next_id_and_leaves_the_original_alone(self):
         catalog = self._catalog()
+        assert catalog.next_id == 2
+        link = Link("c", "2", "Nena", "99")
+        bigger, sid = catalog.new_song("Nena", "99", [Alias("Nena", "99")], [link])
+        assert sid == "2" and bigger.next_id == 3
+        assert set(bigger.songs) == {"1", "2"}
+        assert bigger.alias_owner(("nena", "99")) == "2"
+        assert set(catalog.songs) == {"1"} and catalog.next_id == 2
+        assert bigger.source == catalog.source
+
+    def test_with_song_refuses_an_id_not_in_the_catalog(self):
+        with pytest.raises(ValueError, match="no song '2'.*new_song"):
+            self._catalog().with_song(self._song("2", "Nena", "99"))
+
+    def test_new_song_refuses_a_conflicting_alias(self):
+        catalog = self._catalog()
+        link = Link("c", "2", "Other", "Song")
         with pytest.raises(ValueError, match="belongs to songs '1' and '2'"):
-            catalog.with_song(self._song("2", "Other", "Song", ("Bangles", "EF")))
+            catalog.new_song("Other", "Song", [Alias("Bangles", "EF")], [link])
         assert set(catalog.songs) == {"1"}
 
     def test_without_song_drops_it_and_its_aliases(self):
-        catalog = self._catalog().with_song(
-            self._song("2", "Nena", "99", ("Nena", "99"))
+        catalog = Catalog(
+            {
+                "1": self._song("1", "Bangles", "Eternal Flame", ("Bangles", "EF")),
+                "2": self._song("2", "Nena", "99", ("Nena", "99")),
+            },
+            Path("mem"),
         )
         smaller = catalog.without_song("1")
         assert set(smaller.songs) == {"2"}
         assert smaller.alias_owner(("bangles", "ef")) is None
         assert catalog.alias_owner(("bangles", "ef")) == "1"
+
+    def test_a_dropped_id_never_comes_back(self):
+        catalog, sid = self._catalog().new_song(
+            "Nena", "99", (), [Link("c", "x", "N", "9")]
+        )
+        dropped = catalog.without_song(sid)
+        assert dropped.next_id == 3
+        _, again = dropped.new_song("Nena", "99", (), [Link("c", "x", "N", "9")])
+        assert again == "3"
+
+    def test_next_id_defaults_above_the_highest_numeric_id(self):
+        songs = {"7": self._song("7", "A", "T"), "x": self._song("x", "B", "U")}
+        assert Catalog(songs, Path("mem")).next_id == 8
+        assert Catalog({}, Path("mem")).next_id == 1
+
+    @pytest.mark.parametrize("bad", [7, 0, -1, True, 2.5, "9"])
+    def test_next_id_must_be_a_whole_number_above_every_id(self, bad):
+        with pytest.raises(ValueError, match="next_id"):
+            Catalog({"7": self._song("7", "A", "T")}, Path("mem"), bad)
 
     def test_without_an_unknown_song_raises(self):
         with pytest.raises(ValueError, match="no song '9'"):
@@ -366,6 +405,19 @@ class TestRead:
         with pytest.raises(CatalogError, match="cannot read catalog file"):
             read_catalog(path, log)
 
+    def test_next_id_is_read(self, tmp_path):
+        path = _write(tmp_path, {**SAMPLE, "next_id": 13})
+        assert read_catalog(path, log).next_id == 13
+
+    def test_missing_next_id_defaults(self, tmp_path):
+        assert read_catalog(_write(tmp_path, SAMPLE), log).next_id == 2
+
+    @pytest.mark.parametrize("bad", [1, 0, True, "5", 1.5])
+    def test_bad_next_id_names_the_file(self, tmp_path, bad):
+        path = _write(tmp_path, {**SAMPLE, "next_id": bad})
+        with pytest.raises(CatalogError, match=r"catalog\.json.*next_id"):
+            read_catalog(path, log)
+
 
 class TestWrite:
     def _catalog(self, tmp_path) -> Catalog:
@@ -439,6 +491,18 @@ class TestWrite:
         with pytest.raises(CatalogError, match="catalog.json"):
             write_catalog_file(self._catalog(tmp_path), path, log)
         assert path.read_text(encoding="utf-8") == "{not json"
+
+    def test_next_id_is_written_and_round_trips(self, tmp_path):
+        path = _write(tmp_path, {**SAMPLE, "next_id": 13})
+        catalog = read_catalog(path, log)
+        assert json.loads(dump_catalog(catalog))["next_id"] == 13
+        write_catalog_file(catalog, path, log)
+        assert read_catalog(path, log).next_id == 13
+
+    def test_a_file_without_next_id_gets_one_on_write(self, tmp_path):
+        path = _write(tmp_path, SAMPLE)
+        write_catalog_file(read_catalog(path, log), path, log)
+        assert json.loads(path.read_text(encoding="utf-8"))["next_id"] == 2
 
 
 def _data(chart, songs, editions):
@@ -860,43 +924,6 @@ class TestResolve:
         # Spelled like the Top 2000's raw name; gets the Top 40 history too.
         result = index.lookup("Scorpions", "Hello Josephine")
         assert set(result.placements) == {"top40", "top2000"}
-
-    def test_split_shares_placements_between_its_songs(self):
-        raw = Link(
-            "top40", "3", "The Beatles", "Strawberry Fields Forever ; Penny Lane"
-        )
-        a = CatalogSong(
-            "1",
-            "The Beatles",
-            "Strawberry Fields Forever",
-            [Alias("The Beatles", "Strawberry Fields Forever")],
-            [raw],
-        )
-        b = CatalogSong(
-            "2",
-            "The Beatles",
-            "Penny Lane",
-            [Alias("The Beatles", "Penny Lane")],
-            [
-                Link(
-                    "top40",
-                    "3",
-                    "The Beatles",
-                    "Strawberry Fields Forever ; Penny Lane",
-                )
-            ],
-        )
-        index = self._index(Catalog({"1": a, "2": b}, Path("mem")))
-        expected = {"top40": [Placement({"year": 1967, "week": 9}, 3, 40)]}
-        assert index.lookup("Beatles", "Penny Lane").placements == expected
-        assert (
-            index.lookup("The Beatles", "Strawberry Fields Forever").placements
-            == expected
-        )
-        # The raw name links two songs: it implies neither; raw lookup finds it.
-        result = index.lookup("The Beatles", "Strawberry Fields Forever ; Penny Lane")
-        assert result.placements == expected
-        assert index.implicit_pairs == []
 
     def test_explicit_alias_wins_over_implicit(self):
         a = CatalogSong(

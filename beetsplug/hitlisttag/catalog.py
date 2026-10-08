@@ -20,12 +20,12 @@ import logging
 import os
 import stat
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
-from .dataset import HitlistData, _id_sort_key, _iter_json_files
+from .dataset import HitlistData, _id_sort_key, _is_numeric_id, _iter_json_files
 from .lookup import LookupResult, Placement, SongLookupIndex, match_key
 
 FORMAT_VERSION = 1
@@ -108,13 +108,19 @@ class CatalogSong:
 class Catalog:
     """The catalog's songs by id. Its songs and their aliases can't change:
     ``songs`` is a read-only view of the catalog's own copy, and a change
-    builds a new catalog through ``with_song`` or ``without_song``, which
-    re-run every check here, so the alias index can never go stale. The new
-    catalog shares its song objects with the old one, so a ``Link`` updated
-    in place (see ``Link``) is updated in both."""
+    builds a new catalog through ``with_song``, ``new_song`` or
+    ``without_song``, which re-run every check here, so the alias index can
+    never go stale. The new catalog shares its song objects with the old one,
+    so a ``Link`` updated in place (see ``Link``) is updated in both.
+
+    ``next_id`` is the id the next new song takes; it only grows, so an id
+    once dropped never names another song. A raw song is linked by at most
+    one catalog song: a published entry crediting several songs is split when
+    the chart is acquired (#183), never in the catalog."""
 
     songs: Mapping[str, CatalogSong]
     source: Path
+    next_id: int | None = None
     _alias_owner: dict[tuple[str, str], str] = field(
         init=False, repr=False, compare=False, default_factory=dict
     )
@@ -124,6 +130,28 @@ class Catalog:
         for key, song in songs.items():
             if song.id != key:
                 raise ValueError(f"key {key!r} holds song {song.id!r}")
+        highest = max((int(sid) for sid in songs if _is_numeric_id(sid)), default=0)
+        next_id = highest + 1 if self.next_id is None else self.next_id
+        if (
+            isinstance(next_id, bool)
+            or not isinstance(next_id, int)
+            or next_id <= highest
+            or next_id < 1
+        ):
+            raise ValueError(
+                f"next_id {self.next_id!r} must be a whole number above every "
+                f"numeric song id ({highest})"
+            )
+        linkers: dict[tuple[str, str], str] = {}
+        for sid, song in songs.items():
+            for link in song.links:
+                raw = (link.chart, link.song)
+                if raw in linkers and linkers[raw] != sid:
+                    raise ValueError(
+                        f"{link.chart} {link.song!r} is linked by songs "
+                        f"{linkers[raw]!r} and {sid!r}"
+                    )
+                linkers[raw] = sid
         owners: dict[tuple[str, str], str] = {}
         for sid, song in songs.items():
             for alias in song.aliases:
@@ -137,23 +165,51 @@ class Catalog:
                     )
                 owners[key] = sid
         object.__setattr__(self, "songs", MappingProxyType(songs))
+        object.__setattr__(self, "next_id", next_id)
         object.__setattr__(self, "_alias_owner", owners)
 
     def alias_owner(self, key: tuple[str, str]) -> str | None:
         """The catalog song an explicit alias key resolves to, if any."""
         return self._alias_owner.get(key)
 
+    def link_owner(self, chart: str, song: str) -> str | None:
+        """The catalog song linking raw song ``song`` of ``chart``, if any.
+        Reads the links as they are now, so it sees re-binds."""
+        for sid, catalog_song in self.songs.items():
+            if any((ln.chart, ln.song) == (chart, song) for ln in catalog_song.links):
+                return sid
+        return None
+
     def with_song(self, song: CatalogSong) -> Catalog:
-        """A new catalog holding ``song``, added or replacing the one with its
-        id; raises ``ValueError`` (and changes nothing) if it breaks a rule."""
-        return Catalog({**self.songs, song.id: song}, self.source)
+        """A new catalog with ``song`` replacing the one with its id; raises
+        ``ValueError`` (and changes nothing) if it breaks a rule or names no
+        song here (a new song takes its id from ``new_song``)."""
+        if song.id not in self.songs:
+            raise ValueError(
+                f"no song {song.id!r} in the catalog; a new song takes its id "
+                f"from new_song"
+            )
+        return Catalog({**self.songs, song.id: song}, self.source, self.next_id)
+
+    def new_song(
+        self,
+        artist: str,
+        title: str,
+        aliases: Iterable[Alias] = (),
+        links: Iterable[Link] = (),
+    ) -> tuple[Catalog, str]:
+        """A new catalog holding a new song under ``next_id``, and its id;
+        raises ``ValueError`` (and changes nothing) if it breaks a rule."""
+        sid = str(self.next_id)
+        song = CatalogSong(sid, artist, title, tuple(aliases), tuple(links))
+        return Catalog({**self.songs, sid: song}, self.source, self.next_id + 1), sid
 
     def without_song(self, song_id: str) -> Catalog:
-        """A new catalog without song ``song_id``."""
+        """A new catalog without song ``song_id``; its id is not reused."""
         if song_id not in self.songs:
             raise ValueError(f"no song {song_id!r} in the catalog")
         songs = {sid: s for sid, s in self.songs.items() if sid != song_id}
-        return Catalog(songs, self.source)
+        return Catalog(songs, self.source, self.next_id)
 
 
 def catalog_path(dataset_dir: Path | str) -> Path:
@@ -182,7 +238,7 @@ def read_catalog(path: Path | str, log: logging.Logger) -> Catalog:
             f"{path}: is a dataset file (it has 'chart'); the hitlist name "
             f"'catalog' is reserved for the song catalog"
         )
-    _only_fields(raw, {"catalog", "songs"}, path, "top level")
+    _only_fields(raw, {"catalog", "next_id", "songs"}, path, "top level")
     version = raw.get("catalog")
     if isinstance(version, bool) or version != FORMAT_VERSION:
         raise CatalogError(f"{path}: 'catalog' must be {FORMAT_VERSION}")
@@ -191,7 +247,7 @@ def read_catalog(path: Path | str, log: logging.Logger) -> Catalog:
         raise CatalogError(f"{path}: 'songs' must be an object")
     songs = {sid: _parse_song(sid, val, path) for sid, val in raw_songs.items()}
     try:
-        return Catalog(songs, path)
+        return Catalog(songs, path, raw.get("next_id"))
     except ValueError as err:
         raise CatalogError(f"{path}: {err}") from err
 
@@ -285,6 +341,7 @@ def dump_catalog(catalog: Catalog) -> str:
     """Serialize in the documented shape: songs by id, 2-space indent."""
     payload = {
         "catalog": FORMAT_VERSION,
+        "next_id": catalog.next_id,
         "songs": {
             sid: _dump_song(song)
             for sid, song in sorted(
@@ -296,7 +353,10 @@ def dump_catalog(catalog: Catalog) -> str:
 
 
 def _shape(catalog: Catalog) -> dict:
-    return {sid: _dump_song(song) for sid, song in catalog.songs.items()}
+    return {
+        "next_id": catalog.next_id,
+        "songs": {sid: _dump_song(song) for sid, song in catalog.songs.items()},
+    }
 
 
 def write_catalog_file(catalog: Catalog, path: Path, log: logging.Logger) -> None:
@@ -513,7 +573,7 @@ class CatalogIndex:
     """Resolution through the catalog, with ``SongLookupIndex``'s contract.
 
     Order for a track's match key: an explicit alias; else the live name of
-    a raw song that links to exactly one catalog song (an implicit alias);
+    a raw song a catalog song links (an implicit alias);
     else the raw lookup.
 
     A resolved catalog song's links decide the charts they name, a dangling
@@ -537,24 +597,22 @@ class CatalogIndex:
         self._placements = placements
         self._names = names
         self.bind_report = report
-        linkers: dict[tuple[str, str], set[str]] = {}
+        linkers: dict[tuple[str, str], str] = {}
         for sid, states in report.states.items():
             for state in states:
                 if state.state != "dangling":
-                    linkers.setdefault((state.link.chart, state.link.song), set()).add(
-                        sid
-                    )
+                    linkers[(state.link.chart, state.link.song)] = sid
         self._claimed = set(linkers)
         implicit: dict[tuple[str, str], tuple[set[str], list[tuple[str, str]]]] = {}
-        for raw_id, sids in linkers.items():
-            if len(sids) != 1 or raw_id not in names:
+        for raw_id, sid in linkers.items():
+            if raw_id not in names:
                 continue
             artist, title = names[raw_id]
             key = (match_key(artist), match_key(title))
             if not key[0] or not key[1]:
                 continue
             owners, raws = implicit.setdefault(key, (set(), []))
-            owners.update(sids)
+            owners.add(sid)
             raws.append(raw_id)
         self._implicit = {
             k: next(iter(v[0])) for k, v in implicit.items() if len(v[0]) == 1
