@@ -270,13 +270,16 @@ from-scratch re-acquisition can re-mint ids or respell names. On every use
 the plugin checks each link against the live data. A link is *bound* when its
 id is still cited by an edition and still holds the recorded song: its source
 ids agree on every key both it and the link carry (and, where several raw
-songs carry them, its name agrees too), or, sharing no key, its name agrees. Otherwise it is *re-bound* when
-exactly one live raw song carries the recorded source ids (the recorded name
-decides between several), or, failing that, exactly one has the recorded name.
-Otherwise it is *dangling* and contributes nothing until you re-link it. Two
-candidates never count as a match, and a link never re-binds onto a raw song
-the same or another catalog song already links; it stays dangling, and
-`check` names the song that holds it. So Top 40 and Top 100
+songs carry them, its name agrees too), or, sharing no key, its name agrees.
+Otherwise it is *re-bound* when exactly one live raw song carries the
+recorded source ids (the recorded name decides between several), or, failing
+that, exactly one has the recorded name. Otherwise it is *dangling* and
+contributes nothing until you re-link it. Two candidates never count as a
+match, and a link never re-binds onto a raw song another link keeps (of the
+same catalog song or another) or that an earlier link takes; it stays
+dangling, and when another catalog song holds that raw song, `check` names
+it. Links are re-bound together, so two linked songs trading ids in a
+re-acquisition both follow. So Top 40 and Top 100
 links survive even a from-scratch re-acquisition through top40.nl's title ids,
 and where a title id names several raw songs (a cover bundle) the recorded
 name decides between them. A Top 2000 link survives while Wikipedia's

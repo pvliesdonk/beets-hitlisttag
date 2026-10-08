@@ -60,8 +60,8 @@ class Link:
 
     The one mutable part of a catalog: ``bind_links`` updates a link in place
     when it re-binds, which touches no alias and never duplicates a link
-    within a song. Every other change goes through ``Catalog.with_song`` and
-    ``Catalog.without_song``.
+    within a song. Every other change goes through ``Catalog.with_song``,
+    ``Catalog.new_song`` and ``Catalog.without_song``.
     """
 
     chart: str

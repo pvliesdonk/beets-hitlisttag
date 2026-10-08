@@ -1049,6 +1049,54 @@ class TestBind:
             "6",
         )
 
+    def test_a_refused_move_holds_its_id_against_later_moves(self):
+        # Song 1's move to X is refused (song 3 holds X), so its link stays
+        # at 4; song 2's move to 4 must then be refused too, or two songs
+        # would record raw 4 and the catalog could not be written.
+        x = Song("1", "C", "Song Three")
+        four = Song("4", "B", "Song Two")
+        data = _data(
+            "top40",
+            [x, four],
+            [
+                _week(
+                    1965,
+                    1,
+                    (1, [x], {"top40.nl/title": "75"}),
+                    (2, [four], {"top40.nl/title": "76"}),
+                )
+            ],
+        )
+        songs = {
+            "1": CatalogSong(
+                "1",
+                "A",
+                "Song One",
+                links=[Link("top40", "4", "A", "Song One", {"top40.nl/title": "75"})],
+            ),
+            "2": CatalogSong(
+                "2",
+                "B",
+                "Song Two",
+                links=[Link("top40", "9", "B", "Song Two", {"top40.nl/title": "76"})],
+            ),
+            "3": CatalogSong(
+                "3",
+                "C",
+                "Song Three",
+                links=[Link("top40", "1", "C", "Song Three", {"top40.nl/title": "75"})],
+            ),
+        }
+        catalog = Catalog(songs, Path("mem"))
+        report = bind_links(catalog, [data], log)
+        held = {sid: (s.state, s.held_by) for sid, [s] in report.states.items()}
+        assert held == {
+            "1": ("dangling", "3"),
+            "2": ("dangling", "1"),
+            "3": ("bound", None),
+        }
+        write_catalog_file(catalog, Path(self._tmp) / "catalog.json", log)
+
     def test_no_shared_key_is_not_agreement(self):
         # The live song carries only a subtitle id, the link only a title
         # id: they share no key, so the ids say nothing and the name decides.
