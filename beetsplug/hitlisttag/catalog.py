@@ -20,12 +20,12 @@ import logging
 import os
 import stat
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
-from .dataset import HitlistData, _id_sort_key, _iter_json_files
+from .dataset import HitlistData, _id_sort_key, _is_numeric_id, _iter_json_files
 from .lookup import LookupResult, Placement, SongLookupIndex, match_key
 
 FORMAT_VERSION = 1
@@ -60,8 +60,8 @@ class Link:
 
     The one mutable part of a catalog: ``bind_links`` updates a link in place
     when it re-binds, which touches no alias and never duplicates a link
-    within a song. Every other change goes through ``Catalog.with_song`` and
-    ``Catalog.without_song``.
+    within a song. Every other change goes through ``Catalog.with_song``,
+    ``Catalog.new_song`` and ``Catalog.without_song``.
     """
 
     chart: str
@@ -108,13 +108,19 @@ class CatalogSong:
 class Catalog:
     """The catalog's songs by id. Its songs and their aliases can't change:
     ``songs`` is a read-only view of the catalog's own copy, and a change
-    builds a new catalog through ``with_song`` or ``without_song``, which
-    re-run every check here, so the alias index can never go stale. The new
-    catalog shares its song objects with the old one, so a ``Link`` updated
-    in place (see ``Link``) is updated in both."""
+    builds a new catalog through ``with_song``, ``new_song`` or
+    ``without_song``, which re-run every check here, so the alias index can
+    never go stale. The new catalog shares its song objects with the old one,
+    so a ``Link`` updated in place (see ``Link``) is updated in both.
+
+    ``next_id`` is the id the next new song takes; it only grows, so an id
+    once dropped never names another song. A raw song is linked by at most
+    one catalog song: a published entry crediting several songs is split when
+    the chart is acquired (#183), never in the catalog."""
 
     songs: Mapping[str, CatalogSong]
     source: Path
+    next_id: int | None = None
     _alias_owner: dict[tuple[str, str], str] = field(
         init=False, repr=False, compare=False, default_factory=dict
     )
@@ -124,6 +130,28 @@ class Catalog:
         for key, song in songs.items():
             if song.id != key:
                 raise ValueError(f"key {key!r} holds song {song.id!r}")
+        highest = max((int(sid) for sid in songs if _is_numeric_id(sid)), default=0)
+        next_id = highest + 1 if self.next_id is None else self.next_id
+        if (
+            isinstance(next_id, bool)
+            or not isinstance(next_id, int)
+            or next_id <= highest
+            or next_id < 1
+        ):
+            raise ValueError(
+                f"next_id {self.next_id!r} must be a whole number above every "
+                f"numeric song id ({highest})"
+            )
+        linkers: dict[tuple[str, str], str] = {}
+        for sid, song in songs.items():
+            for link in song.links:
+                raw = (link.chart, link.song)
+                if raw in linkers and linkers[raw] != sid:
+                    raise ValueError(
+                        f"{link.chart} {link.song!r} is linked by songs "
+                        f"{linkers[raw]!r} and {sid!r}"
+                    )
+                linkers[raw] = sid
         owners: dict[tuple[str, str], str] = {}
         for sid, song in songs.items():
             for alias in song.aliases:
@@ -137,23 +165,51 @@ class Catalog:
                     )
                 owners[key] = sid
         object.__setattr__(self, "songs", MappingProxyType(songs))
+        object.__setattr__(self, "next_id", next_id)
         object.__setattr__(self, "_alias_owner", owners)
 
     def alias_owner(self, key: tuple[str, str]) -> str | None:
         """The catalog song an explicit alias key resolves to, if any."""
         return self._alias_owner.get(key)
 
+    def link_owner(self, chart: str, song: str) -> str | None:
+        """The catalog song linking raw song ``song`` of ``chart``, if any.
+        Reads the links as they are now, so it sees re-binds."""
+        for sid, catalog_song in self.songs.items():
+            if any((ln.chart, ln.song) == (chart, song) for ln in catalog_song.links):
+                return sid
+        return None
+
     def with_song(self, song: CatalogSong) -> Catalog:
-        """A new catalog holding ``song``, added or replacing the one with its
-        id; raises ``ValueError`` (and changes nothing) if it breaks a rule."""
-        return Catalog({**self.songs, song.id: song}, self.source)
+        """A new catalog with ``song`` replacing the one with its id; raises
+        ``ValueError`` (and changes nothing) if it breaks a rule or names no
+        song here (a new song takes its id from ``new_song``)."""
+        if song.id not in self.songs:
+            raise ValueError(
+                f"no song {song.id!r} in the catalog; a new song takes its id "
+                f"from new_song"
+            )
+        return Catalog({**self.songs, song.id: song}, self.source, self.next_id)
+
+    def new_song(
+        self,
+        artist: str,
+        title: str,
+        aliases: Iterable[Alias] = (),
+        links: Iterable[Link] = (),
+    ) -> tuple[Catalog, str]:
+        """A new catalog holding a new song under ``next_id``, and its id;
+        raises ``ValueError`` (and changes nothing) if it breaks a rule."""
+        sid = str(self.next_id)
+        song = CatalogSong(sid, artist, title, tuple(aliases), tuple(links))
+        return Catalog({**self.songs, sid: song}, self.source, self.next_id + 1), sid
 
     def without_song(self, song_id: str) -> Catalog:
-        """A new catalog without song ``song_id``."""
+        """A new catalog without song ``song_id``; its id is not reused."""
         if song_id not in self.songs:
             raise ValueError(f"no song {song_id!r} in the catalog")
         songs = {sid: s for sid, s in self.songs.items() if sid != song_id}
-        return Catalog(songs, self.source)
+        return Catalog(songs, self.source, self.next_id)
 
 
 def catalog_path(dataset_dir: Path | str) -> Path:
@@ -182,7 +238,7 @@ def read_catalog(path: Path | str, log: logging.Logger) -> Catalog:
             f"{path}: is a dataset file (it has 'chart'); the hitlist name "
             f"'catalog' is reserved for the song catalog"
         )
-    _only_fields(raw, {"catalog", "songs"}, path, "top level")
+    _only_fields(raw, {"catalog", "next_id", "songs"}, path, "top level")
     version = raw.get("catalog")
     if isinstance(version, bool) or version != FORMAT_VERSION:
         raise CatalogError(f"{path}: 'catalog' must be {FORMAT_VERSION}")
@@ -190,8 +246,10 @@ def read_catalog(path: Path | str, log: logging.Logger) -> Catalog:
     if not isinstance(raw_songs, dict):
         raise CatalogError(f"{path}: 'songs' must be an object")
     songs = {sid: _parse_song(sid, val, path) for sid, val in raw_songs.items()}
+    if "next_id" in raw and raw["next_id"] is None:
+        raise CatalogError(f"{path}: 'next_id' must be a whole number, not null")
     try:
-        return Catalog(songs, path)
+        return Catalog(songs, path, raw.get("next_id"))
     except ValueError as err:
         raise CatalogError(f"{path}: {err}") from err
 
@@ -285,6 +343,7 @@ def dump_catalog(catalog: Catalog) -> str:
     """Serialize in the documented shape: songs by id, 2-space indent."""
     payload = {
         "catalog": FORMAT_VERSION,
+        "next_id": catalog.next_id,
         "songs": {
             sid: _dump_song(song)
             for sid, song in sorted(
@@ -296,7 +355,10 @@ def dump_catalog(catalog: Catalog) -> str:
 
 
 def _shape(catalog: Catalog) -> dict:
-    return {sid: _dump_song(song) for sid, song in catalog.songs.items()}
+    return {
+        "next_id": catalog.next_id,
+        "songs": {sid: _dump_song(song) for sid, song in catalog.songs.items()},
+    }
 
 
 def write_catalog_file(catalog: Catalog, path: Path, log: logging.Logger) -> None:
@@ -347,12 +409,16 @@ def write_catalog_file(catalog: Catalog, path: Path, log: logging.Logger) -> Non
 @dataclass
 class LinkState:
     """One link's state against the live data; ``previous`` is the raw id a
-    re-bound link had before."""
+    re-bound link had before; for a link left dangling because its only
+    candidate is another catalog song's raw song (#173), ``candidate`` is
+    that raw id and ``held_by`` the song linking it."""
 
     song_id: str
     link: Link
     state: str  # "bound", "rebound" or "dangling"
     previous: str | None = None
+    held_by: str | None = None
+    candidate: str | None = None
 
 
 @dataclass
@@ -370,12 +436,20 @@ class BindReport:
         return any(s.state == "rebound" for s in self.all())
 
 
-class _LiveChart:
+def _carries(live: Mapping[str, str], recorded: Mapping[str, str]) -> bool:
+    """Live ids carry recorded ones when they share a key and every shared
+    key has the same value. No shared key is not agreement (#175)."""
+    shared = recorded.keys() & live.keys()
+    return bool(shared) and all(live[key] == recorded[key] for key in shared)
+
+
+class LiveChart:
     """What binding needs from one chart's live data: which raw songs an
     edition cites, their source ids (the keys, with their values, on which
     every citing entry agrees) and their names by match key."""
 
     def __init__(self, data: HitlistData):
+        self.chart = data.chart
         self.songs = data.songs
         self.cited: set[str] = set()
         entry_ids: dict[str, list[dict[str, str]]] = {}
@@ -401,29 +475,55 @@ class _LiveChart:
 
     def by_source_ids(self, recorded: dict[str, str]) -> list[str]:
         return [
-            sid
-            for sid, live in self.source_ids.items()
-            if all(live.get(k) == v for k, v in recorded.items())
+            sid for sid, live in self.source_ids.items() if _carries(live, recorded)
         ]
 
     def is_recorded_song(self, link: Link) -> bool:
         """The live raw song at the link's id is still the song the link
-        recorded. With source ids recorded, its own carry them and, where
-        another live cited raw song carries them too (a title id shared by
-        cover versions), its name has the recorded name's match key as well.
-        With none recorded, the name alone decides."""
+        recorded. Where the link's ids and the live ones share a key, they
+        must agree on every shared key (#175: a subtitle id that changed with
+        a re-entry no longer counts), and where another live cited raw song
+        carries them too (a title id shared by cover versions), its name has
+        the recorded name's match key as well. With no shared key, the name
+        alone decides."""
         raw = self.songs[link.song]
         name_matches = (match_key(raw.artist), match_key(raw.title)) == link.key()
-        if not link.source_ids:
-            return name_matches
         live = self.source_ids.get(link.song, {})
-        if not all(live.get(k) == v for k, v in link.source_ids.items()):
+        if not link.source_ids.keys() & live.keys():
+            return name_matches
+        if not _carries(live, link.source_ids):
             return False
         return name_matches or len(self.by_source_ids(link.source_ids)) == 1
+
+    def link(self, sid: str) -> Link:
+        """A link to raw song ``sid`` as it is now: its published name and the
+        source ids every entry citing it agrees on."""
+        raw = self.songs[sid]
+        return Link(
+            self.chart, sid, raw.artist, raw.title, dict(self.source_ids.get(sid, {}))
+        )
 
     def name_key(self, sid: str) -> tuple[str, str]:
         raw = self.songs[sid]
         return (match_key(raw.artist), match_key(raw.title))
+
+
+def live_charts(datasets: list[HitlistData]) -> dict[str, LiveChart]:
+    """Each chart's live data, by chart name."""
+    return {data.chart: LiveChart(data) for data in datasets}
+
+
+@dataclass
+class _Move:
+    """One link's outcome while binding: ``bound``, ``dangling``, or a
+    ``move`` to ``target``; a refused move is ``dangling`` with its
+    ``target`` kept and the song whose link holds it in ``holder``."""
+
+    sid: str
+    link: Link
+    state: str
+    target: str | None = None
+    holder: str | None = None
 
 
 def bind_links(
@@ -432,20 +532,27 @@ def bind_links(
     """Check every link against the live data; re-bind in place where exactly
     one live raw song carries the recorded source ids (several are narrowed by
     the recorded name's match key), else exactly one has the recorded name's
-    match key. Two candidates at a step is dangling, and so is a candidate the
-    same catalog song already links. A cited id that now holds another song
-    (ids re-minted from scratch) is re-bound like a missing one, never kept."""
-    live = {data.chart: _LiveChart(data) for data in datasets}
-    report = BindReport()
+    match key. Two candidates at a step is dangling. A cited id that now holds
+    another song (ids re-minted from scratch) is re-bound like a missing one,
+    never kept.
+
+    Moves are decided together, so catalog order never matters: a move is
+    refused (the link dangles where it is) when its target is held by a link
+    that stays, bound or dangling, or is claimed by an earlier move, of this
+    catalog song or another (#173); refusing one can refuse another, so this
+    repeats until nothing changes. Then the moves are applied at once, so two
+    links trading ids (a from-scratch re-acquisition listing songs in another
+    order) both re-bind."""
+    live = live_charts(datasets)
+    moves: list[_Move] = []
     for sid, song in catalog.songs.items():
-        states = report.states.setdefault(sid, [])
         for link in song.links:
             chart = live.get(link.chart)
             if chart is None:
-                states.append(LinkState(sid, link, "dangling"))
+                moves.append(_Move(sid, link, "dangling"))
                 continue
             if link.song in chart.cited and chart.is_recorded_song(link):
-                states.append(LinkState(sid, link, "bound"))
+                moves.append(_Move(sid, link, "bound"))
                 continue
             found = chart.by_source_ids(link.source_ids) if link.source_ids else []
             if len(found) > 1:
@@ -453,20 +560,33 @@ def bind_links(
             elif not found:
                 found = chart.by_key.get(link.key(), [])
             if len(found) != 1:
-                states.append(LinkState(sid, link, "dangling"))
+                moves.append(_Move(sid, link, "dangling"))
                 continue
-            previous, new_id = link.song, found[0]
-            if any(
-                (other.chart, other.song) == (link.chart, new_id)
-                for other in song.links
-                if other is not link
-            ):
-                log.info(
-                    f"catalog: song {sid} link {link.chart} {previous} left "
-                    f"dangling: {new_id} is already linked by this song"
-                )
-                states.append(LinkState(sid, link, "dangling"))
+            moves.append(_Move(sid, link, "move", found[0]))
+    refused = True
+    while refused:
+        refused = False
+        staying = {(m.link.chart, m.link.song): m for m in moves if m.state != "move"}
+        claimed: dict[tuple[str, str], _Move] = {}
+        for move in moves:
+            if move.state != "move":
                 continue
+            key = (move.link.chart, move.target)
+            other = staying.get(key) or claimed.get(key)
+            if other is not None:
+                move.state, move.holder = "dangling", other.sid
+                refused = True
+                continue
+            claimed[key] = move
+    report = BindReport()
+    for move in moves:
+        sid, link = move.sid, move.link
+        states = report.states.setdefault(sid, [])
+        if move.state == "bound":
+            states.append(LinkState(sid, link, "bound"))
+        elif move.state == "move":
+            chart = live[link.chart]
+            previous, new_id = link.song, move.target
             raw = chart.songs[new_id]
             link.song = new_id
             link.artist, link.title = raw.artist, raw.title
@@ -476,6 +596,24 @@ def bind_links(
                 f"({raw.artist} - {raw.title})"
             )
             states.append(LinkState(sid, link, "rebound", previous))
+        elif move.holder == sid:
+            log.info(
+                f"catalog: song {sid} link {link.chart} {link.song} left "
+                f"dangling: {move.target} is already linked by this song"
+            )
+            states.append(LinkState(sid, link, "dangling"))
+        elif move.holder is not None:
+            log.info(
+                f"catalog: song {sid} link {link.chart} {link.song} left "
+                f"dangling: {move.target} is linked by song {move.holder}"
+            )
+            states.append(
+                LinkState(
+                    sid, link, "dangling", held_by=move.holder, candidate=move.target
+                )
+            )
+        else:
+            states.append(LinkState(sid, link, "dangling"))
     return report
 
 
@@ -513,7 +651,7 @@ class CatalogIndex:
     """Resolution through the catalog, with ``SongLookupIndex``'s contract.
 
     Order for a track's match key: an explicit alias; else the live name of
-    a raw song that links to exactly one catalog song (an implicit alias);
+    a raw song a catalog song links (an implicit alias);
     else the raw lookup.
 
     A resolved catalog song's links decide the charts they name, a dangling
@@ -537,24 +675,22 @@ class CatalogIndex:
         self._placements = placements
         self._names = names
         self.bind_report = report
-        linkers: dict[tuple[str, str], set[str]] = {}
+        linkers: dict[tuple[str, str], str] = {}
         for sid, states in report.states.items():
             for state in states:
                 if state.state != "dangling":
-                    linkers.setdefault((state.link.chart, state.link.song), set()).add(
-                        sid
-                    )
+                    linkers[(state.link.chart, state.link.song)] = sid
         self._claimed = set(linkers)
         implicit: dict[tuple[str, str], tuple[set[str], list[tuple[str, str]]]] = {}
-        for raw_id, sids in linkers.items():
-            if len(sids) != 1 or raw_id not in names:
+        for raw_id, sid in linkers.items():
+            if raw_id not in names:
                 continue
             artist, title = names[raw_id]
             key = (match_key(artist), match_key(title))
             if not key[0] or not key[1]:
                 continue
             owners, raws = implicit.setdefault(key, (set(), []))
-            owners.update(sids)
+            owners.add(sid)
             raws.append(raw_id)
         self._implicit = {
             k: next(iter(v[0])) for k, v in implicit.items() if len(v[0]) == 1
@@ -696,10 +832,15 @@ def check_catalog(index: CatalogIndex, catalog: Catalog) -> CheckResult:
         )
     for state in dangling:
         song = catalog.songs[state.song_id]
+        held = (
+            f"; {state.link.chart} {state.candidate} is linked by @{state.held_by}"
+            if state.held_by is not None
+            else ""
+        )
         lines.append(
             f"dangling: song {state.song_id} ({song.artist} - {song.title}) "
             f"{state.link.chart} {state.link.song} "
-            f"(recorded: {state.link.artist} - {state.link.title})"
+            f"(recorded: {state.link.artist} - {state.link.title}{held})"
         )
     for pair in index.implicit_pairs:
         raws = " and ".join(f"{chart} {rid}" for chart, rid in pair.raws)

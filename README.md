@@ -218,13 +218,14 @@ matched like `chartsgen` matches), and `links`: the raw songs, per chart,
 whose chart positions are its own. A link records the raw song's id, name and
 source ids as they were when the link was made. For source ids, that means the
 keys on which every entry citing the raw song agrees, with their values.
-Several links under one song merge spellings and charts into one history; the
-same raw song linked from two songs is a split (a double A-side crediting
-both).
+Several links under one song merge spellings and charts into one history. A
+raw song is linked by at most one catalog song: an entry crediting several
+songs is split when the chart is acquired.
 
 ```json
 {
   "catalog": 1,
+  "next_id": 2,
   "songs": {
     "1": {
       "artist": "Simon & Garfunkel",
@@ -241,8 +242,10 @@ both).
 }
 ```
 
-Rules the file keeps: an alias belongs to one song; a song has at least one
-link; a song links a raw song at most once. The name `catalog` is reserved:
+`next_id` is the id the next new song takes; ids are never reused. Rules
+the file keeps: an alias belongs to one song; a song has at least one link;
+a song links a raw song at most once; a raw song is linked by at most one
+song. The name `catalog` is reserved:
 don't configure a hitlist called `catalog`, because its dataset file would
 take the catalog's path.
 
@@ -266,13 +269,17 @@ only `chartscatalog check` reads it.
 from-scratch re-acquisition can re-mint ids or respell names. On every use
 the plugin checks each link against the live data. A link is *bound* when its
 id is still cited by an edition and still holds the recorded song: its source
-ids agree (and, where several raw songs share those ids, its name does too),
-or, without any source ids, its name agrees. Otherwise it is *re-bound* when
-exactly one live raw song carries the recorded source ids (the recorded name
-decides between several), or, failing that, exactly one has the recorded name.
-Otherwise it is *dangling* and contributes nothing until you re-link it. Two
-candidates never count as a match, and a link never re-binds onto a raw song
-the same catalog song already links; it stays dangling. So Top 40 and Top 100
+ids agree on every key both it and the link carry (and, where several raw
+songs carry them, its name agrees too), or, sharing no key, its name agrees.
+Otherwise it is *re-bound* when exactly one live raw song carries the
+recorded source ids (the recorded name decides between several), or, failing
+that, exactly one has the recorded name. Otherwise it is *dangling* and
+contributes nothing until you re-link it. Two candidates never count as a
+match, and a link never re-binds onto a raw song another link keeps (of the
+same catalog song or another) or that an earlier link takes; it stays
+dangling, and when another catalog song holds that raw song, `check` names
+it. Links are re-bound together, so two linked songs trading ids in a
+re-acquisition both follow. So Top 40 and Top 100
 links survive even a from-scratch re-acquisition through top40.nl's title ids,
 and where a title id names several raw songs (a cover bundle) the recorded
 name decides between them. A Top 2000 link survives while Wikipedia's

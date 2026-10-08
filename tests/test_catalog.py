@@ -26,6 +26,7 @@ from beetsplug.hitlisttag.catalog import (
     catalog_path,
     check_catalog,
     dump_catalog,
+    live_charts,
     read_catalog,
     stray_catalog_files,
     write_catalog_file,
@@ -120,10 +121,19 @@ class TestModel:
         assert catalog.alias_owner(("bangles", "x")) == "1"
         assert catalog.alias_owner(("bangles", "y")) is None
 
-    def test_a_split_may_link_one_raw_song_from_two_songs(self):
-        a = CatalogSong("1", "A", "T", links=[Link("c", "9", "A / B", "T ; U")])
-        b = CatalogSong("2", "B", "U", links=[Link("c", "9", "A / B", "T ; U")])
-        Catalog({"1": a, "2": b}, Path("mem"))  # no error
+    def test_a_raw_song_belongs_to_one_catalog_song(self):
+        # #162 decision 8: a split is acquisition's (#183), so two catalog
+        # songs never share a raw song.
+        a = CatalogSong("1", "A", "T", links=[Link("c", "9", "A / B", "T")])
+        b = CatalogSong("2", "B", "T", links=[Link("c", "9", "A / B", "T")])
+        with pytest.raises(ValueError, match="c '9' is linked by songs '1' and '2'"):
+            Catalog({"1": a, "2": b}, Path("mem"))
+
+    def test_link_owner(self):
+        a = CatalogSong("1", "A", "T", links=[Link("c", "9", "A", "T")])
+        catalog = Catalog({"1": a}, Path("mem"))
+        assert catalog.link_owner("c", "9") == "1"
+        assert catalog.link_owner("c", "8") is None
 
     def test_an_alias_that_normalizes_to_nothing_claims_no_key(self):
         a = CatalogSong("1", "A", "T", [Alias("Nena", "?")], [Link("c", "1", "A", "T")])
@@ -177,15 +187,6 @@ class TestCopyOnChange:
         assert set(catalog.songs) == {"1"}
         assert catalog.alias_owner(("nena", "99")) is None
 
-    def test_with_song_adds_and_leaves_the_original_alone(self):
-        catalog = self._catalog()
-        bigger = catalog.with_song(self._song("2", "Nena", "99", ("Nena", "99")))
-        assert set(bigger.songs) == {"1", "2"}
-        assert bigger.alias_owner(("nena", "99")) == "2"
-        assert set(catalog.songs) == {"1"}
-        assert catalog.alias_owner(("nena", "99")) is None
-        assert bigger.source == catalog.source
-
     def test_with_song_replaces_a_song_with_the_same_id(self):
         catalog = self._catalog()
         changed = catalog.with_song(
@@ -195,20 +196,67 @@ class TestCopyOnChange:
         assert changed.alias_owner(("bangles", "ef")) is None
         assert catalog.alias_owner(("bangles", "ef")) == "1"
 
-    def test_with_song_refuses_a_conflicting_alias(self):
+    def test_new_song_takes_next_id_and_leaves_the_original_alone(self):
         catalog = self._catalog()
+        assert catalog.next_id == 2
+        link = Link("c", "2", "Nena", "99")
+        bigger, sid = catalog.new_song("Nena", "99", [Alias("Nena", "99")], [link])
+        assert sid == "2" and bigger.next_id == 3
+        assert set(bigger.songs) == {"1", "2"}
+        assert bigger.alias_owner(("nena", "99")) == "2"
+        assert set(catalog.songs) == {"1"} and catalog.next_id == 2
+        assert bigger.source == catalog.source
+
+    def test_with_song_refuses_an_id_not_in_the_catalog(self):
+        with pytest.raises(ValueError, match="no song '2'.*new_song"):
+            self._catalog().with_song(self._song("2", "Nena", "99"))
+
+    def test_new_song_refuses_a_conflicting_alias(self):
+        catalog = self._catalog()
+        link = Link("c", "2", "Other", "Song")
         with pytest.raises(ValueError, match="belongs to songs '1' and '2'"):
-            catalog.with_song(self._song("2", "Other", "Song", ("Bangles", "EF")))
+            catalog.new_song("Other", "Song", [Alias("Bangles", "EF")], [link])
         assert set(catalog.songs) == {"1"}
 
     def test_without_song_drops_it_and_its_aliases(self):
-        catalog = self._catalog().with_song(
-            self._song("2", "Nena", "99", ("Nena", "99"))
+        catalog = Catalog(
+            {
+                "1": self._song("1", "Bangles", "Eternal Flame", ("Bangles", "EF")),
+                "2": self._song("2", "Nena", "99", ("Nena", "99")),
+            },
+            Path("mem"),
         )
         smaller = catalog.without_song("1")
         assert set(smaller.songs) == {"2"}
         assert smaller.alias_owner(("bangles", "ef")) is None
         assert catalog.alias_owner(("bangles", "ef")) == "1"
+
+    def test_a_dropped_id_never_comes_back(self):
+        catalog, sid = self._catalog().new_song(
+            "Nena", "99", (), [Link("c", "x", "N", "9")]
+        )
+        dropped = catalog.without_song(sid)
+        assert dropped.next_id == 3
+        _, again = dropped.new_song("Nena", "99", (), [Link("c", "x", "N", "9")])
+        assert again == "3"
+
+    def test_with_song_keeps_next_id(self):
+        catalog, sid = self._catalog().new_song(
+            "Nena", "99", (), [Link("c", "x", "N", "9")]
+        )
+        dropped = catalog.without_song(sid)
+        replaced = dropped.with_song(self._song("1", "Bangles", "Eternal Flame"))
+        assert replaced.next_id == 3
+
+    def test_next_id_defaults_above_the_highest_numeric_id(self):
+        songs = {"7": self._song("7", "A", "T"), "x": self._song("x", "B", "U")}
+        assert Catalog(songs, Path("mem")).next_id == 8
+        assert Catalog({}, Path("mem")).next_id == 1
+
+    @pytest.mark.parametrize("bad", [7, 0, -1, True, 2.5, "9"])
+    def test_next_id_must_be_a_whole_number_above_every_id(self, bad):
+        with pytest.raises(ValueError, match="next_id"):
+            Catalog({"7": self._song("7", "A", "T")}, Path("mem"), bad)
 
     def test_without_an_unknown_song_raises(self):
         with pytest.raises(ValueError, match="no song '9'"):
@@ -366,6 +414,19 @@ class TestRead:
         with pytest.raises(CatalogError, match="cannot read catalog file"):
             read_catalog(path, log)
 
+    def test_next_id_is_read(self, tmp_path):
+        path = _write(tmp_path, {**SAMPLE, "next_id": 13})
+        assert read_catalog(path, log).next_id == 13
+
+    def test_missing_next_id_defaults(self, tmp_path):
+        assert read_catalog(_write(tmp_path, SAMPLE), log).next_id == 2
+
+    @pytest.mark.parametrize("bad", [1, 0, True, "5", 1.5, None])
+    def test_bad_next_id_names_the_file(self, tmp_path, bad):
+        path = _write(tmp_path, {**SAMPLE, "next_id": bad})
+        with pytest.raises(CatalogError, match=r"catalog\.json.*next_id"):
+            read_catalog(path, log)
+
 
 class TestWrite:
     def _catalog(self, tmp_path) -> Catalog:
@@ -439,6 +500,18 @@ class TestWrite:
         with pytest.raises(CatalogError, match="catalog.json"):
             write_catalog_file(self._catalog(tmp_path), path, log)
         assert path.read_text(encoding="utf-8") == "{not json"
+
+    def test_next_id_is_written_and_round_trips(self, tmp_path):
+        path = _write(tmp_path, {**SAMPLE, "next_id": 13})
+        catalog = read_catalog(path, log)
+        assert json.loads(dump_catalog(catalog))["next_id"] == 13
+        write_catalog_file(catalog, path, log)
+        assert read_catalog(path, log).next_id == 13
+
+    def test_a_file_without_next_id_gets_one_on_write(self, tmp_path):
+        path = _write(tmp_path, SAMPLE)
+        write_catalog_file(read_catalog(path, log), path, log)
+        assert json.loads(path.read_text(encoding="utf-8"))["next_id"] == 2
 
 
 def _data(chart, songs, editions):
@@ -800,6 +873,243 @@ class TestBind:
         assert isinstance(report, BindReport)
         assert isinstance(report.states["1"][0], LinkState)
 
+    def test_a_shared_key_binds_when_another_key_changed(self):
+        # #175: entries now disagree on the subtitle, so the live raw song
+        # agrees only on the title id; that shared key still identifies it.
+        # The name changed too, and a second raw song shares the title-id key
+        # with another value, so only the id comparison can bind it.
+        raw = Song("5", "Scorpions", "Hello Josephine (Remastered)")
+        other = Song("6", "Scorpions", "Other Song")
+        data = _data(
+            "top40",
+            [raw, other],
+            [
+                _week(
+                    1965,
+                    1,
+                    (1, [raw], {"top40.nl/title": "75", "top40.nl/subtitle": "A"}),
+                    (2, [other], {"top40.nl/title": "76", "top40.nl/subtitle": "A"}),
+                ),
+                _week(
+                    1965,
+                    2,
+                    (1, [raw], {"top40.nl/title": "75", "top40.nl/subtitle": "B"}),
+                ),
+            ],
+        )
+        link = Link(
+            "top40",
+            "5",
+            "The Scorpions ((GBR))",
+            "Hello Josephine",
+            {"top40.nl/title": "75", "top40.nl/subtitle": "A"},
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["bound"]
+
+    def test_no_shared_key_lets_the_name_decide(self):
+        raw = Song("5", "Scorpions", "Hello Josephine")
+        data = _data("top40", [raw], [_week(1965, 1, (1, [raw], {}))])
+        link = Link(
+            "top40", "5", "Scorpions", "Hello Josephine", {"top40.nl/title": "75"}
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["bound"]
+
+    def test_a_live_song_without_ids_never_matches_by_ids(self):
+        # Nothing to disagree with is not agreement: no re-bind onto song 7.
+        raw = Song("7", "Someone Else", "Another Tune")
+        data = _data("top40", [raw], [_week(1965, 1, (1, [raw], {}))])
+        link = Link(
+            "top40", "5", "Scorpions", "Hello Josephine", {"top40.nl/title": "75"}
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+
+    def test_a_rebind_onto_another_songs_raw_song_is_dangling(self, caplog):
+        # #173: song 1's link lost its id; its only candidate is the raw song
+        # song 2 links. That would be a split nobody decided.
+        raw = Song("5", "Scorpions", "Hello Josephine")
+        data = _data(
+            "top40", [raw], [_week(1965, 1, (1, [raw], {"top40.nl/title": "75"}))]
+        )
+        one = CatalogSong(
+            "1",
+            "Scorpions",
+            "Hello Josephine",
+            links=[
+                Link(
+                    "top40",
+                    "9",
+                    "Scorpions",
+                    "Hello Josephine",
+                    {"top40.nl/title": "75"},
+                )
+            ],
+        )
+        two = CatalogSong(
+            "2",
+            "Scorpions",
+            "Hello Josephine (live)",
+            links=[
+                Link(
+                    "top40",
+                    "5",
+                    "Scorpions",
+                    "Hello Josephine",
+                    {"top40.nl/title": "75"},
+                )
+            ],
+        )
+        with caplog.at_level(logging.INFO):
+            report = bind_links(Catalog({"1": one, "2": two}, Path("mem")), [data], log)
+        [state] = report.states["1"]
+        assert (state.state, state.held_by, state.candidate) == ("dangling", "2", "5")
+        assert one.links[0].song == "9"
+        assert "is linked by song 2" in caplog.text
+
+    def test_link_helper_records_the_live_name_and_agreed_ids(self):
+        raw = Song("5", "Scorpions", "Hello Josephine")
+        data = _data(
+            "top40",
+            [raw],
+            [
+                _week(
+                    1965,
+                    1,
+                    (1, [raw], {"top40.nl/title": "75", "top40.nl/subtitle": "A"}),
+                ),
+                _week(
+                    1965,
+                    2,
+                    (1, [raw], {"top40.nl/title": "75", "top40.nl/subtitle": "B"}),
+                ),
+            ],
+        )
+        assert live_charts([data])["top40"].link("5") == Link(
+            "top40", "5", "Scorpions", "Hello Josephine", {"top40.nl/title": "75"}
+        )
+
+    def _two(self, one_links, two_links, order=("1", "2")):
+        songs = {
+            "1": CatalogSong("1", "A", "Song One", links=one_links),
+            "2": CatalogSong("2", "B", "Song Two", links=two_links),
+        }
+        return Catalog({sid: songs[sid] for sid in order}, Path("mem"))
+
+    def test_two_songs_converging_on_one_raw_song(self):
+        # Both stale links' only candidate is raw 5: the first re-binds, the
+        # second dangles naming it (never two songs on one raw song).
+        raw = Song("5", "A", "Song One")
+        data = _data(
+            "top40", [raw], [_week(1965, 1, (1, [raw], {"top40.nl/title": "75"}))]
+        )
+        ids = {"top40.nl/title": "75"}
+        catalog = self._two(
+            [Link("top40", "9", "A", "Song One", dict(ids))],
+            [Link("top40", "8", "A", "Song One", dict(ids))],
+        )
+        report = bind_links(catalog, [data], log)
+        assert [s.state for s in report.states["1"]] == ["rebound"]
+        [two] = report.states["2"]
+        assert (two.state, two.held_by, two.candidate) == ("dangling", "1", "5")
+        write_catalog_file(catalog, Path(self._tmp) / "catalog.json", log)
+
+    @pytest.fixture(autouse=True)
+    def _tmpdir(self, tmp_path):
+        self._tmp = tmp_path
+
+    @pytest.mark.parametrize("order", [("1", "2"), ("2", "1")])
+    def test_a_chain_of_moves_settles_in_one_pass(self, order):
+        # Song 1 needs raw 4, which song 2's stale link records but is
+        # leaving for raw 6. Catalog order must not matter.
+        a = Song("4", "A", "Song One")
+        b = Song("6", "B", "Song Two")
+        data = _data(
+            "top40",
+            [a, b],
+            [
+                _week(
+                    1965,
+                    1,
+                    (1, [a], {"top40.nl/title": "75"}),
+                    (2, [b], {"top40.nl/title": "76"}),
+                )
+            ],
+        )
+        catalog = self._two(
+            [Link("top40", "3", "A", "Song One", {"top40.nl/title": "75"})],
+            [Link("top40", "4", "B", "Song Two", {"top40.nl/title": "76"})],
+            order,
+        )
+        report = bind_links(catalog, [data], log)
+        assert [s.state for s in report.all()] == ["rebound", "rebound"]
+        assert (catalog.songs["1"].links[0].song, catalog.songs["2"].links[0].song) == (
+            "4",
+            "6",
+        )
+
+    def test_a_refused_move_holds_its_id_against_later_moves(self):
+        # Song 1's move to X is refused (song 3 holds X), so its link stays
+        # at 4; song 2's move to 4 must then be refused too, or two songs
+        # would record raw 4 and the catalog could not be written.
+        x = Song("1", "C", "Song Three")
+        four = Song("4", "B", "Song Two")
+        data = _data(
+            "top40",
+            [x, four],
+            [
+                _week(
+                    1965,
+                    1,
+                    (1, [x], {"top40.nl/title": "75"}),
+                    (2, [four], {"top40.nl/title": "76"}),
+                )
+            ],
+        )
+        songs = {
+            "1": CatalogSong(
+                "1",
+                "A",
+                "Song One",
+                links=[Link("top40", "4", "A", "Song One", {"top40.nl/title": "75"})],
+            ),
+            "2": CatalogSong(
+                "2",
+                "B",
+                "Song Two",
+                links=[Link("top40", "9", "B", "Song Two", {"top40.nl/title": "76"})],
+            ),
+            "3": CatalogSong(
+                "3",
+                "C",
+                "Song Three",
+                links=[Link("top40", "1", "C", "Song Three", {"top40.nl/title": "75"})],
+            ),
+        }
+        catalog = Catalog(songs, Path("mem"))
+        report = bind_links(catalog, [data], log)
+        held = {sid: (s.state, s.held_by) for sid, [s] in report.states.items()}
+        assert held == {
+            "1": ("dangling", "3"),
+            "2": ("dangling", "1"),
+            "3": ("bound", None),
+        }
+        write_catalog_file(catalog, Path(self._tmp) / "catalog.json", log)
+
+    def test_no_shared_key_is_not_agreement(self):
+        # The live song carries only a subtitle id, the link only a title
+        # id: they share no key, so the ids say nothing and the name decides.
+        raw = Song("7", "Someone Else", "Another Tune")
+        data = _data(
+            "top40", [raw], [_week(1965, 1, (1, [raw], {"top40.nl/subtitle": "A"}))]
+        )
+        link = Link(
+            "top40", "5", "Scorpions", "Hello Josephine", {"top40.nl/title": "75"}
+        )
+        report = bind_links(self._catalog(link), [data], log)
+        assert [s.state for s in report.all()] == ["dangling"]
+
 
 class TestResolve:
     def _datasets(self):
@@ -860,43 +1170,6 @@ class TestResolve:
         # Spelled like the Top 2000's raw name; gets the Top 40 history too.
         result = index.lookup("Scorpions", "Hello Josephine")
         assert set(result.placements) == {"top40", "top2000"}
-
-    def test_split_shares_placements_between_its_songs(self):
-        raw = Link(
-            "top40", "3", "The Beatles", "Strawberry Fields Forever ; Penny Lane"
-        )
-        a = CatalogSong(
-            "1",
-            "The Beatles",
-            "Strawberry Fields Forever",
-            [Alias("The Beatles", "Strawberry Fields Forever")],
-            [raw],
-        )
-        b = CatalogSong(
-            "2",
-            "The Beatles",
-            "Penny Lane",
-            [Alias("The Beatles", "Penny Lane")],
-            [
-                Link(
-                    "top40",
-                    "3",
-                    "The Beatles",
-                    "Strawberry Fields Forever ; Penny Lane",
-                )
-            ],
-        )
-        index = self._index(Catalog({"1": a, "2": b}, Path("mem")))
-        expected = {"top40": [Placement({"year": 1967, "week": 9}, 3, 40)]}
-        assert index.lookup("Beatles", "Penny Lane").placements == expected
-        assert (
-            index.lookup("The Beatles", "Strawberry Fields Forever").placements
-            == expected
-        )
-        # The raw name links two songs: it implies neither; raw lookup finds it.
-        result = index.lookup("The Beatles", "Strawberry Fields Forever ; Penny Lane")
-        assert result.placements == expected
-        assert index.implicit_pairs == []
 
     def test_explicit_alias_wins_over_implicit(self):
         a = CatalogSong(
@@ -1469,6 +1742,32 @@ class TestDurability:
             ("top2000", "dangling"),
         }
 
+    def test_survives_from_scratch_reacquisition_in_another_order(self, tmp_path):
+        # The source now lists Nena first, so from scratch the two Top 40 ids
+        # swap: each link's only candidate is the id the other is leaving.
+        data_dir, _ = self._seed(tmp_path)
+        for name in ("top40.json", "top2000.json"):
+            (data_dir / name).unlink()
+        swapped = [
+            _acquired(
+                {"year": 1965, "week": 1},
+                ("Nena", "99 Luftballons", {"top40.nl/title": "900"}),
+                ("The Scorpions ((GBR))", "Hello Josephine", {"top40.nl/title": "75"}),
+            )
+        ]
+        _acquire(data_dir, None, "top40", swapped)
+        _acquire(data_dir, None, "top2000", self.V1_TOP2000)
+        live = read_dataset(data_dir, HITLISTS, log)
+        catalog = read_catalog(catalog_path(data_dir), log)
+        index = CatalogIndex.from_datasets(live, catalog, log)
+        assert index.bind_report.with_state("dangling") == []
+        scorpions, nena = _history(index)
+        assert scorpions.placements["top40"] == [
+            Placement({"year": 1965, "week": 1}, 2, 2)
+        ]
+        assert nena.placements["top40"] == [Placement({"year": 1965, "week": 1}, 1, 2)]
+        write_catalog_file(catalog, catalog.source, log)
+
 
 class TestCheck:
     def test_report_lines_counts_rebound_dangling_and_pairs(self, tmp_path):
@@ -1548,6 +1847,35 @@ class TestCheck:
             0,
             False,
         )
+
+    def test_a_rebind_held_by_another_song_names_it(self):
+        # #173 through check: song 1's only candidate is song 2's raw song.
+        raw = Song("5", "Scorpions", "Hello Josephine")
+        data = _data(
+            "top40", [raw], [_week(1965, 1, (1, [raw], {"top40.nl/title": "75"}))]
+        )
+        ids = {"top40.nl/title": "75"}
+        one = CatalogSong(
+            "1",
+            "Scorpions",
+            "Hello Josephine",
+            links=[Link("top40", "9", "Scorpions", "Hello Josephine", dict(ids))],
+        )
+        two = CatalogSong(
+            "2",
+            "Scorpions",
+            "Hello Josephine (live)",
+            links=[Link("top40", "5", "Scorpions", "Hello Josephine", dict(ids))],
+        )
+        catalog = Catalog({"1": one, "2": two}, Path("mem"))
+        result = check_catalog(
+            CatalogIndex.from_datasets([data], catalog, log), catalog
+        )
+        assert (
+            "dangling: song 1 (Scorpions - Hello Josephine) top40 9 (recorded: "
+            "Scorpions - Hello Josephine; top40 5 is linked by @2)"
+        ) in result.lines
+        assert result.problems == 1
 
     def test_stray_catalog_files(self, tmp_path):
         (tmp_path / "catalog.json").write_text(
