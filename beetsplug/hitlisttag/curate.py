@@ -16,11 +16,22 @@ it did before. Splitting a multi-song entry is acquisition's (#183).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
-from .catalog import Alias, Catalog, CatalogSong, Link, LiveChart, dump_catalog
+from .catalog import (
+    Alias,
+    BindReport,
+    Catalog,
+    CatalogSong,
+    Link,
+    LiveChart,
+    dump_catalog,
+)
+from .dataset import _id_sort_key
+from .lookup import match_key
 
 
 class CurationError(Exception):
@@ -252,3 +263,129 @@ def drop(catalog: Catalog, song: str) -> Change:
             f"{_count(len(target.aliases), 'alias', 'aliases')}"
         ],
     )
+
+
+_RAW_REF = re.compile(r"([^:\s]+):(\S+)")
+_SONG_REF = re.compile(r"@(\d+)")
+
+
+def parse_refs(
+    args: list[str], live: Mapping[str, LiveChart]
+) -> tuple[list[tuple[str, str]], list[str], list[str]]:
+    """Raw refs (``chart:id`` for a chart in the data), catalog song refs
+    (``@id``) and the remaining words, each in argument order."""
+    raws: list[tuple[str, str]] = []
+    songs: list[str] = []
+    words: list[str] = []
+    for arg in args:
+        raw = _RAW_REF.fullmatch(arg)
+        song = _SONG_REF.fullmatch(arg)
+        if raw and raw.group(1) in live:
+            raws.append((raw.group(1), raw.group(2)))
+        elif song:
+            songs.append(song.group(1))
+        else:
+            words.append(arg)
+    return raws, songs, words
+
+
+@dataclass(frozen=True)
+class Candidate:
+    ref: str
+    raw: tuple[str, str] | None
+    song: str | None
+    line: str
+
+
+def _tokens(*texts: str) -> set[str]:
+    return {token for text in texts for token in match_key(text).split()}
+
+
+def run(chart: LiveChart, raw_id: str) -> str:
+    """``1966–1967, 12 editions, best 3`` for a raw song's placements."""
+    placements = chart.placements.get(raw_id, [])
+    years = sorted({axes["year"] for axes, _ in placements if "year" in axes})
+    span = (
+        ""
+        if not years
+        else str(years[0])
+        if years[0] == years[-1]
+        else f"{years[0]}–{years[-1]}"
+    )
+    best = min(position for _, position in placements)
+    parts = [span] if span else []
+    parts += [_count(len(placements), "edition"), f"best {best}"]
+    return ", ".join(parts)
+
+
+def find(
+    catalog: Catalog, live: Mapping[str, LiveChart], words: list[str]
+) -> list[Candidate]:
+    """Raw songs, then catalog songs, whose names hold every word (compared
+    through ``match_key``, token by token)."""
+    wanted = _tokens(*words)
+    if not wanted:
+        raise CurationError("find needs words to look for")
+    out: list[Candidate] = []
+    for chart_name in sorted(live):
+        chart = live[chart_name]
+        for raw_id in sorted(chart.cited, key=_id_sort_key):
+            raw = chart.songs[raw_id]
+            if not wanted <= _tokens(raw.artist, raw.title):
+                continue
+            ref = f"{chart_name}:{raw_id}"
+            owner = catalog.link_owner(chart_name, raw_id)
+            owned = f"  → @{owner}" if owner else ""
+            line = f"{ref:<13} {raw.artist} - {raw.title}  {run(chart, raw_id)}{owned}"
+            out.append(Candidate(ref, (chart_name, raw_id), None, line))
+    for sid in sorted(catalog.songs, key=_id_sort_key):
+        song = catalog.songs[sid]
+        names = [(song.artist, song.title)] + [
+            (a.artist, a.title) for a in song.aliases
+        ]
+        if any(wanted <= _tokens(*n) for n in names):
+            line = (
+                f"{'@' + sid:<13} {song.artist} - {song.title}  "
+                f"{_count(len(song.links), 'link')}, "
+                f"{_count(len(song.aliases), 'alias', 'aliases')}"
+            )
+            out.append(Candidate("@" + sid, None, sid, line))
+    return out
+
+
+def describe(
+    catalog: Catalog,
+    live: Mapping[str, LiveChart],
+    report: BindReport,
+    raw: tuple[str, str] | None = None,
+    song: str | None = None,
+) -> list[str]:
+    """``show``: a catalog song with its aliases and links' states, or a raw
+    song with its run and the catalog song linking it."""
+    if song is not None:
+        target = _song(catalog, song)
+        lines = [f"@{song} {target.artist} - {target.title}"]
+        lines += [f"  alias {a.artist} - {a.title}" for a in target.aliases]
+        for state in report.states.get(song, []):
+            link = state.link
+            how = (
+                f"re-bound from {state.previous}"
+                if state.state == "rebound"
+                else state.state
+            )
+            lines.append(
+                f"  link {link.chart + ':' + link.song:<14} {link.artist} - "
+                f"{link.title}  {how}"
+            )
+        return lines
+    assert raw is not None
+    chart_name, raw_id = raw
+    chart = live.get(chart_name)
+    if chart is None or raw_id not in chart.cited:
+        raise CurationError(f"{chart_name}:{raw_id} is not in the current data")
+    name = chart.songs[raw_id]
+    owner = catalog.link_owner(chart_name, raw_id)
+    return [
+        f"{chart_name}:{raw_id} {name.artist} - {name.title}  {run(chart, raw_id)}",
+        f"  linked by @{owner}" if owner else "  linked by no catalog song",
+    ]

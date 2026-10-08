@@ -11,14 +11,18 @@ from beetsplug.hitlisttag.catalog import (
     Alias,
     Catalog,
     CatalogIndex,
+    bind_links,
     live_charts,
 )
 from beetsplug.hitlisttag.curate import (
     CurationError,
     alias,
+    describe,
     drop,
+    find,
     merge,
     parse_name,
+    parse_refs,
     unalias,
     unlink,
 )
@@ -335,3 +339,67 @@ class TestPolicyCases:
         aliased = alias(EMPTY, LIVE, ("P Act", "Tune"), raw=("top40", "1")).catalog
         restored = unalias(aliased, "1", ("P Act", "Tune")).catalog
         assert _lookup(restored, "P Act", "Tune") == _lookup(EMPTY, "P Act", "Tune")
+
+
+class TestReferences:
+    def test_refs_and_words(self):
+        raws, songs, words = parse_refs(
+            ["top40:1", "@12", "made", "up", "nochart:3", "top2000:1"], LIVE
+        )
+        assert raws == [("top40", "1"), ("top2000", "1")]
+        assert songs == ["12"]
+        assert words == ["made", "up", "nochart:3"]
+
+
+class TestFind:
+    def test_every_word_must_match(self):
+        refs = [c.ref for c in find(EMPTY, LIVE, ["made", "tune"])]
+        assert refs == ["top2000:1", "top40:1", "top40:2", "top40:7"]
+        assert [c.ref for c in find(EMPTY, LIVE, ["made", "tune", "live"])] == [
+            "top40:7"
+        ]
+
+    def test_raw_line_shows_its_run_and_its_catalog_song(self):
+        catalog = merge(EMPTY, LIVE, [("top40", "1"), ("top40", "2")], []).catalog
+        [line] = [
+            c.line
+            for c in find(catalog, LIVE, ["made", "up", "tune"])
+            if c.ref == "top40:2"
+        ]
+        assert (
+            line
+            == "top40:2       Pretend Act - Made-Up Tune  1970, 1 edition, best 1  → @1"
+        )
+
+    def test_catalog_songs_follow(self):
+        catalog = merge(EMPTY, LIVE, [("top40", "1"), ("top40", "2")], []).catalog
+        last = find(catalog, LIVE, ["made", "up", "tune"])[-1]
+        assert (last.ref, last.song) == ("@1", "1")
+        assert (
+            last.line == "@1            Pretend Act - Made Up Tune  2 links, 0 aliases"
+        )
+
+
+class TestDescribe:
+    def test_a_catalog_song(self):
+        catalog = merge(
+            EMPTY,
+            LIVE,
+            [("top40", "1"), ("top2000", "1")],
+            [],
+            ("Pretend Act", "Made Up Tune"),
+        ).catalog
+        report = bind_links(catalog, DATASETS, log)
+        assert describe(catalog, LIVE, report, song="1") == [
+            "@1 Pretend Act - Made Up Tune",
+            "  alias Pretend Act - Made Up Tune",
+            "  link top40:1        Pretend Act - Made Up Tune  bound",
+            "  link top2000:1      Pretend Act - Made Up Tune (Remaster)  bound",
+        ]
+
+    def test_a_raw_song(self):
+        report = bind_links(EMPTY, DATASETS, log)
+        assert describe(EMPTY, LIVE, report, raw=("top40", "5")) == [
+            "top40:5 Duo Act - Side A  1970, 1 edition, best 3",
+            "  linked by no catalog song",
+        ]
